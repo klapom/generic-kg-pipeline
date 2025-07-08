@@ -28,7 +28,9 @@ venv/
 ENV/
 env/
 .env
-.env.*
+.env.local
+.env.production
+.env.development
 
 # IDE
 .vscode/
