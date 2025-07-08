@@ -1,6 +1,6 @@
 # Generic Knowledge Graph Pipeline System
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/your-org/generic-kg-pipeline/ci.yml?branch=main)
+![Build Status](https://img.shields.io/github/actions/workflow/status/klapom/generic-kg-pipeline/ci.yml?branch=main)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 
@@ -10,7 +10,7 @@ A flexible, plugin-based pipeline system for extracting knowledge graphs from va
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/generic-kg-pipeline.git
+git clone https://github.com/klapom/generic-kg-pipeline.git
 cd generic-kg-pipeline
 
 # Copy environment configuration

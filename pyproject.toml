@@ -63,10 +63,10 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/your-org/generic-kg-pipeline"
-"Bug Reports" = "https://github.com/your-org/generic-kg-pipeline/issues"
-"Source" = "https://github.com/your-org/generic-kg-pipeline"
-"Documentation" = "https://github.com/your-org/generic-kg-pipeline/wiki"
+"Homepage" = "https://github.com/klapom/generic-kg-pipeline"
+"Bug Reports" = "https://github.com/klapom/generic-kg-pipeline/issues"
+"Source" = "https://github.com/klapom/generic-kg-pipeline"
+"Documentation" = "https://github.com/klapom/generic-kg-pipeline/wiki"
 
 [project.scripts]
 kg-pipeline = "api.main:main"
