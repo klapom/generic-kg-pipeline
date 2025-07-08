@@ -1,0 +1,1 @@
+"""Template plugins for LLM prompts and output formatting"""
