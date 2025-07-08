@@ -1,0 +1,30 @@
+#!/bin/bash
+
+echo "=== GitHub Repository Setup Guide ==="
+echo ""
+echo "1. Erstelle ein neues Repository auf GitHub:"
+echo "   - Gehe zu https://github.com/new"
+echo "   - Repository Name: generic-kg-pipeline"
+echo "   - Description: A flexible, plugin-based pipeline system for extracting knowledge graphs from documents"
+echo "   - Wähle 'Private' oder 'Public'"
+echo "   - WICHTIG: Erstelle KEIN README, .gitignore oder License (wir haben diese bereits)"
+echo ""
+echo "2. Nachdem das Repository erstellt wurde, führe diese Befehle aus:"
+echo ""
+echo "   # Ersetze YOUR_USERNAME mit deinem GitHub Username"
+echo "   git remote add origin https://github.com/YOUR_USERNAME/generic-kg-pipeline.git"
+echo "   git push -u origin main"
+echo ""
+echo "3. Alternative mit SSH (falls konfiguriert):"
+echo ""
+echo "   git remote add origin git@github.com:YOUR_USERNAME/generic-kg-pipeline.git"
+echo "   git push -u origin main"
+echo ""
+echo "=== Aktuelle Git Status ==="
+git status
+echo ""
+echo "=== Git Log ==="
+git log --oneline
+echo ""
+echo "=== Remote Repositories ==="
+git remote -v
