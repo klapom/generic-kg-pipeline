@@ -10,6 +10,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from core.clients.vllm_smoldocling import VLLMSmolDoclingClient, SmolDoclingConfig
+from core.clients.hochschul_llm import HochschulLLMClient, TripleExtractionConfig
 from plugins.parsers.base_parser import ParseError
 
 logger = logging.getLogger(__name__)
@@ -343,13 +344,48 @@ async def process_document_pipeline(document_id: str, request: ProcessingRequest
                 "updated_at": datetime.now()
             })
             
-            # TODO: Implement triple extraction with Hochschul-LLM (GPU 2)
-            logger.info("Triple extraction with Hochschul-LLM (GPU 2) - to be implemented")
-            status["triples_count"] = 15  # Placeholder
+            # Use Hochschul-LLM for triple extraction (external API)
+            logger.info("Starting triple extraction with Hochschul-LLM via OpenAI API")
+            
+            try:
+                async with HochschulLLMClient() as llm_client:
+                    # TODO: Get actual text chunks from parsed document
+                    # For now, this is a placeholder - in real implementation,
+                    # we would have the parsed and chunked text
+                    sample_chunks = [
+                        "Sample text chunk 1 for triple extraction.",
+                        "Sample text chunk 2 with more content."
+                    ]
+                    
+                    # Extract triples from chunks
+                    extraction_results = await llm_client.extract_triples_batch(
+                        sample_chunks,
+                        domain_context=request.domain_ontology,
+                        ontology_hints=None  # TODO: Load from ontology plugins
+                    )
+                    
+                    # Count successful extractions
+                    successful_extractions = [r for r in extraction_results if r.success]
+                    total_triples = sum(r.triple_count for r in successful_extractions)
+                    
+                    status["triples_count"] = total_triples
+                    status["extraction_details"] = {
+                        "chunks_processed": len(sample_chunks),
+                        "successful_chunks": len(successful_extractions),
+                        "failed_chunks": len(extraction_results) - len(successful_extractions),
+                        "average_confidence": sum(r.average_confidence for r in successful_extractions) / len(successful_extractions) if successful_extractions else 0.0
+                    }
+                    
+                    logger.info(f"Triple extraction completed: {total_triples} triples from {len(successful_extractions)} chunks")
+                    
+            except Exception as e:
+                logger.error(f"Hochschul-LLM triple extraction failed: {e}")
+                status["triples_count"] = 0
+                status["extraction_error"] = str(e)
             
             status.update({
                 "progress": 80.0,
-                "details": {"llm_provider": "Hochschul-LLM", "gpu": "GPU 2"},
+                "details": {"llm_provider": "Hochschul-LLM", "api": "OpenAI-compatible"},
                 "updated_at": datetime.now()
             })
         

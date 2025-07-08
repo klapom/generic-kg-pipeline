@@ -78,15 +78,17 @@ The document processing pipeline handles various document formats with specializ
 
 ### 2. Triple Extraction Pipeline
 
-#### Knowledge Extraction (GPU Workload 2)
-- **Service**: Hochschul-LLM (Qwen1.5-based)
+#### Knowledge Extraction (External LLM Infrastructure)
+- **Service**: Hochschul-LLM via OpenAI-compatible API
 - **Purpose**: Extract semantic triples from document chunks
-- **GPU Usage**: External high-performance LLM infrastructure
+- **Infrastructure**: External Hochschul GPU infrastructure (Qwen1.5-based)
+- **API**: OpenAI-compatible REST endpoints
 - **Features**:
   - Domain-specific prompt engineering
   - Multi-hop reasoning
   - Relationship validation
   - Confidence scoring
+  - Batch processing with rate limiting
 
 ### 3. Storage Layer
 
@@ -120,7 +122,7 @@ The document processing pipeline handles various document formats with specializ
 
 3. **Triple Extraction Flow**
    ```
-   Document Chunks → RAG Context → Hochschul-LLM → Triple Validation → Fuseki
+   Document Chunks → RAG Context → Hochschul-LLM API → Triple Validation → Fuseki
    ```
 
 4. **Query Flow**
@@ -130,19 +132,22 @@ The document processing pipeline handles various document formats with specializ
 
 ## Performance Considerations
 
-### GPU Workload Separation
+### Workload Separation
 
-The architecture deliberately separates GPU workloads to optimize performance:
+The architecture separates processing workloads for optimal performance:
 
-1. **vLLM SmolDocling (GPU 1)**
+1. **Local GPU (vLLM SmolDocling)**
+   - Dedicated for PDF parsing and document understanding
    - Optimized for batch processing
    - High memory usage for model loading
    - Continuous operation for document queue
 
-2. **Hochschul-LLM (GPU 2)**
-   - Request-based processing
-   - Lower latency requirements
-   - Higher computational requirements per request
+2. **External Infrastructure (Hochschul-LLM)**
+   - Dedicated Hochschul GPU infrastructure
+   - OpenAI-compatible API access
+   - Managed rate limiting and scaling
+   - High-performance Qwen1.5-based models
+   - Request-based processing with batch optimization
 
 ### Scaling Strategies
 
