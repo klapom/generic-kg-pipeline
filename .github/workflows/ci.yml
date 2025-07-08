@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov ruff black
+    
+    - name: Check environment variables
+      run: |
+        echo "Checking for required environment variable definitions..."
+        if [ -f .env.example ]; then
+          echo "✓ .env.example found"
+          cat .env.example | grep -E "^[A-Z_]+=" | cut -d= -f1 | while read var; do
+            echo "  - $var defined"
+          done
+        else
+          echo "✗ .env.example not found"
+          exit 1
+        fi
+    
+    - name: Lint with ruff
+      run: |
+        echo "Running ruff linter..."
+        ruff check . --output-format=github
+      continue-on-error: true
+    
+    - name: Format check with black
+      run: |
+        echo "Checking code formatting with black..."
+        black --check --diff .
+      continue-on-error: true
+    
+    - name: Run tests with pytest
+      run: |
+        echo "Running tests..."
+        pytest tests/ -v --cov=core --cov=plugins --cov-report=xml --cov-report=term
+      env:
+        HOCHSCHUL_LLM_ENDPOINT: "https://test.example.com"
+        HOCHSCHUL_LLM_API_KEY: "test-key"
+        VLLM_SMOLDOCLING_URL: "http://localhost:8002"
+        FUSEKI_URL: "http://localhost:3030"
+        CHROMADB_URL: "http://localhost:8001"
+        OLLAMA_URL: "http://localhost:11434"
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      if: always()
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run security checks
+      uses: pyupio/safety@v1
+      with:
+        api-key: ${{ secrets.SAFETY_API_KEY }}
+      continue-on-error: true
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      run: |
+        docker build -f docker/Dockerfile -t generic-kg-pipeline:test .
+    
+    - name: Test Docker image
+      run: |
+        docker run --rm generic-kg-pipeline:test python --version

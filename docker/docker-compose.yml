@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  # Haupt-Pipeline Service
+  kg-pipeline:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - HOCHSCHUL_LLM_ENDPOINT=${HOCHSCHUL_LLM_ENDPOINT}
+      - HOCHSCHUL_LLM_API_KEY=${HOCHSCHUL_LLM_API_KEY}
+      - VLLM_SMOLDOCLING_URL=http://vllm-smoldocling:8000
+    depends_on:
+      - fuseki
+      - chromadb
+      - vllm-smoldocling
+      - ollama  # für Development/Fallback
+
+  # vLLM für SmolDocling (PDF Processing)
+  vllm-smoldocling:
+    image: vllm/vllm-openai:latest
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./models/smoldocling:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      python -m vllm.entrypoints.openai.api_server
+      --model /models/smoldocling
+      --gpu-memory-utilization 0.9
+
+  # Triple Store
+  fuseki:
+    image: stain/jena-fuseki:latest
+    ports:
+      - "3030:3030"
+    volumes:
+      - fuseki_data:/fuseki/databases
+
+  # Vector Store
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - chromadb_data:/chroma/data
+
+  # Development LLM (Fallback)
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  fuseki_data:
+  chromadb_data:
+  ollama_data:

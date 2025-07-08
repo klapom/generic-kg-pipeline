@@ -1,0 +1,64 @@
+# Domain Configuration
+domain:
+  name: "general"
+  ontology_path: "plugins/ontologies/general.ttl"
+  enabled_formats: ["pdf", "docx", "xlsx", "txt"]
+
+# Document Parsing Configuration
+parsing:
+  pdf:
+    provider: "vllm_smoldocling"
+    vllm_endpoint: "${VLLM_SMOLDOCLING_URL}"
+    gpu_optimization: true
+    max_pages: 100
+  
+  office:
+    provider: "native"
+  
+  text:
+    provider: "native"
+
+# LLM Configuration für Triple Extraction
+llm:
+  # Primärer Provider: Hochschul-LLM
+  provider: "hochschul"
+  
+  hochschul:
+    endpoint: "${HOCHSCHUL_LLM_ENDPOINT}"
+    api_key: "${HOCHSCHUL_LLM_API_KEY}"
+    model: "qwen1.5-72b"
+    temperature: 0.1
+    max_tokens: 4000
+    timeout: 60
+  
+  # Fallback für lokale Entwicklung
+  fallback_provider: "ollama"
+  
+  ollama:
+    endpoint: "${OLLAMA_URL}"
+    model: "qwen:7b"
+    temperature: 0.1
+
+# Chunking Configuration
+chunking:
+  max_tokens: 2000
+  overlap_ratio: 0.2
+  preserve_context: true
+
+# Storage Configuration
+storage:
+  triple_store:
+    type: "fuseki"
+    endpoint: "${FUSEKI_URL}"
+    dataset: "kg_dataset"
+  
+  vector_store:
+    type: "chromadb"
+    endpoint: "${CHROMADB_URL}"
+    collection: "document_chunks"
+
+# RAG Configuration
+rag:
+  similarity_threshold: 0.7
+  max_context_chunks: 3
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
