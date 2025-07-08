@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core.config import get_config
+from core.clients.vllm_smoldocling import VLLMSmolDoclingClient
+from core.clients.hochschul_llm import HochschulLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -41,32 +43,41 @@ async def health_check():
     
     # vLLM SmolDocling (GPU 1)
     try:
-        # TODO: Implement actual health check
-        services["vllm_smoldocling"] = {
-            "status": "healthy",
-            "endpoint": config.parsing.pdf.vllm_endpoint,
-            "purpose": "PDF parsing (GPU 1)"
-        }
+        async with VLLMSmolDoclingClient() as vllm_client:
+            health_info = await vllm_client.health_check()
+            services["vllm_smoldocling"] = {
+                "status": health_info["status"],
+                "endpoint": config.parsing.pdf.vllm_endpoint,
+                "purpose": "PDF parsing (GPU 1)",
+                "response_time_ms": health_info.get("response_time_ms", 0),
+                "model_info": health_info.get("model_info", {}),
+                "gpu_info": health_info.get("gpu_info", {})
+            }
     except Exception as e:
         logger.error(f"vLLM SmolDocling health check failed: {e}")
         services["vllm_smoldocling"] = {
             "status": "unhealthy",
+            "endpoint": config.parsing.pdf.vllm_endpoint,
             "error": str(e)
         }
     
     # Hochschul-LLM (GPU 2)
     try:
-        # TODO: Implement actual health check
+        hochschul_client = HochschulLLMClient()
+        health_info = await hochschul_client.health_check()
+        
         if config.llm.hochschul:
             services["hochschul_llm"] = {
-                "status": "healthy", 
+                "status": health_info["status"],
                 "endpoint": config.llm.hochschul.endpoint,
-                "purpose": "Triple extraction (GPU 2)"
+                "model": config.llm.hochschul.model,
+                "purpose": "Triple extraction (GPU 2)",
+                "message": health_info.get("message", "")
             }
         else:
             services["hochschul_llm"] = {
                 "status": "not_configured",
-                "message": "Hochschul-LLM not configured"
+                "message": "Hochschul-LLM credentials not provided"
             }
     except Exception as e:
         logger.error(f"Hochschul-LLM health check failed: {e}")
