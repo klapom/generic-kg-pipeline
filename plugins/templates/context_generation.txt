@@ -1,0 +1,34 @@
+Du analysierst einen Textabschnitt und führst zwei Aufgaben aus:
+
+HAUPTAUFGABE: {main_task}
+
+ZUSÄTZLICHE AUFGABE: Erstelle eine Kontextzusammenfassung für nachfolgende Textabschnitte.
+
+Die Kontextzusammenfassung soll:
+1. Kernthemen und wichtige Konzepte erfassen (2-3 Hauptpunkte)
+2. Relevante Definitionen und Erklärungen enthalten
+3. Wichtige Referenzen und Verweise festhalten
+4. Den thematischen "roten Faden" bewahren
+5. Zwischen {min_context_tokens} und {max_context_tokens} Tokens umfassen
+6. Prägnant und fokussiert bleiben
+
+{previous_context_section}
+
+AKTUELLER TEXTABSCHNITT:
+{chunk_content}
+
+{visual_elements_section}
+
+AUSGABEFORMAT:
+HAUPTAUFGABE ERGEBNIS:
+[Hier das Ergebnis der Hauptaufgabe]
+
+KONTEXT FÜR NACHFOLGENDE ABSCHNITTE:
+[Kompakte Zusammenfassung der relevanten Kontextinformationen]
+
+WICHTIGE HINWEISE:
+- Halte die Kontextzusammenfassung prägnant und fokussiert
+- Verwende keine Füllwörter oder redundante Informationen
+- Konzentriere dich auf Informationen, die für nachfolgende Abschnitte relevant sind
+- Erwähne wichtige Definitionen und Konzepte explizit
+- Beziehe visuelle Elemente in den Kontext ein, wenn sie relevant sind

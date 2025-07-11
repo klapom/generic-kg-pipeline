@@ -1,0 +1,22 @@
+Du führst die folgende Aufgabe aus, wobei du den Kontext aus vorherigen Textabschnitten berücksichtigst:
+
+VORHERIGER KONTEXT:
+{inherited_context}
+
+AUFGABE:
+{main_task}
+
+AKTUELLER TEXTABSCHNITT:
+{chunk_content}
+
+{visual_elements_section}
+
+WICHTIGE HINWEISE:
+- Berücksichtige den vorherigen Kontext bei der Bearbeitung
+- Achte auf Kontinuität und Zusammenhänge
+- Verwende Definitionen und Konzepte aus dem Kontext
+- Erwähne Bezüge zu vorherigen Inhalten wenn relevant
+- Integriere visuelle Elemente in deine Analyse
+
+AUSGABE:
+[Hier das Ergebnis der Aufgabe unter Berücksichtigung des Kontexts]

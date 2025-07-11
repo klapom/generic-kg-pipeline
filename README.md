@@ -4,7 +4,46 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 
-A flexible, plugin-based pipeline system for extracting knowledge graphs from various document formats. The system uses vLLM with SmolDocling for advanced PDF parsing and a Hochschul-LLM (Qwen1.5-based) for triple extraction.
+A flexible, plugin-based pipeline system for extracting knowledge graphs from various document formats. The system uses vLLM with SmolDocling for advanced PDF parsing, Qwen2.5-VL for visual analysis, and a Hochschul-LLM (Qwen1.5-based) for triple extraction with **Context Inheritance** chunking strategy.
+
+## 🎯 Current Implementation Status
+
+### ✅ COMPLETED (MVP Phase)
+- **Multi-Modal Document Parser System (100%)**
+  - PDF Parser with vLLM SmolDocling integration
+  - DOCX Parser with image extraction
+  - XLSX Parser with chart analysis
+  - PPTX Parser with slide visuals
+  - Parser Factory for automatic format detection
+  - Context mapping for precise text-image relationships
+
+- **Content Chunking with Context Inheritance (100%)**
+  - Structure-aware chunking based on document structure
+  - Context group formation (PDF sections, DOCX headings, XLSX sheets, PPTX topics)
+  - LLM-based context summary generation
+  - Dual-task prompting for optimal context inheritance
+  - Async processing for performance
+
+- **LLM Client Infrastructure (100%)**
+  - vLLM SmolDocling client for PDF parsing
+  - Hochschul-LLM client for triple extraction
+  - Qwen2.5-VL client for visual analysis
+  - OpenAI-compatible API integration
+
+- **FastAPI Application (80%)**
+  - Health, Documents, Pipeline, Query endpoints
+  - Multi-modal upload support
+  - Batch processing integration
+
+- **Batch Processing System (100%)**
+  - Concurrent document processing
+  - Progress tracking and error handling
+  - Filesystem-based processing
+
+### 🔄 IN DEVELOPMENT
+- Triple Store Integration (Fuseki)
+- Vector Store Integration (ChromaDB)
+- End-to-End Pipeline Integration
 
 ## 🚀 Quick Start
 
@@ -34,22 +73,28 @@ The system separates GPU workloads for optimal performance:
 - Handles complex document layouts, tables, and images
 - Runs on dedicated GPU for maximum throughput
 
-### GPU Workload 2: Triple Extraction
+### External API: Triple Extraction
 - **Hochschul-LLM (Qwen1.5-based)**: Knowledge graph triple extraction
-- External high-performance LLM service
+- External high-performance LLM service via OpenAI-compatible API
 - Optimized for semantic understanding and relationship extraction
+
+### Visual Analysis
+- **Qwen2.5-VL**: Multi-modal visual element analysis
+- Processes embedded diagrams, charts, and images
+- Integrated into document parsing pipeline
 
 ### Core Components
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Document Input │────▶│  vLLM SmolDocling│────▶│  Chunking       │
-│  (PDF, DOCX,    │     │  (GPU 1)         │     │  & Processing   │
-│   XLSX, TXT)    │     └──────────────────┘     └────────┬────────┘
-└─────────────────┘                                        │
+│  Document Input │────▶│  vLLM SmolDocling│────▶│  Context        │
+│  (PDF, DOCX,    │     │  (Local GPU)     │     │  Inheritance    │
+│   XLSX, PPTX)   │     │  + Qwen2.5-VL    │     │  Chunking       │
+└─────────────────┘     └──────────────────┘     └────────┬────────┘
+                                                          │
                                                           ▼
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  Triple Store   │◀────│  Hochschul-LLM   │◀────│  RAG Pipeline   │
-│  (Fuseki)       │     │  (GPU 2)         │     │  (ChromaDB)     │
+│  (Fuseki)       │     │  (External API)  │     │  (ChromaDB)     │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
@@ -58,8 +103,9 @@ The system separates GPU workloads for optimal performance:
 ### Prerequisites
 - Python 3.11+
 - Docker and Docker Compose
-- NVIDIA GPU with CUDA support (for vLLM)
-- Access to Hochschul-LLM API
+- NVIDIA GPU with CUDA support (for vLLM SmolDocling)
+- Access to Hochschul-LLM API (external service)
+- Access to Qwen2.5-VL API (for visual analysis)
 
 ### Local Development
 ```bash

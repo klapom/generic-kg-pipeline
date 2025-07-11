@@ -1,0 +1,534 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix kg: <https://generic-kg-pipeline.org/ontology/> .
+
+# ============================================================================
+# General Knowledge Graph Pipeline Ontology
+# ============================================================================
+
+<https://generic-kg-pipeline.org/ontology/> a owl:Ontology ;
+    dc:title "General Knowledge Graph Pipeline Ontology" ;
+    dc:description "A general-purpose ontology for knowledge graph creation from documents" ;
+    dc:creator "Generic Knowledge Graph Pipeline System" ;
+    dcterms:created "2025-01-09"^^xsd:date ;
+    owl:versionInfo "1.0" .
+
+# ============================================================================
+# Core Classes
+# ============================================================================
+
+kg:Entity a owl:Class ;
+    rdfs:label "Entity" ;
+    rdfs:comment "A general entity that can be mentioned in documents" .
+
+kg:Concept a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Concept" ;
+    rdfs:comment "An abstract concept or idea" .
+
+kg:Person a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Person" ;
+    rdfs:comment "A person mentioned in the document" .
+
+kg:Organization a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Organization" ;
+    rdfs:comment "An organization, company, or institution" .
+
+kg:Location a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Location" ;
+    rdfs:comment "A geographic location or place" .
+
+kg:Event a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Event" ;
+    rdfs:comment "An event or occurrence" .
+
+kg:Technology a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Technology" ;
+    rdfs:comment "A technology, tool, or technical system" .
+
+kg:Method a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Method" ;
+    rdfs:comment "A method, technique, or approach" .
+
+kg:Publication a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Publication" ;
+    rdfs:comment "A publication, paper, or document" .
+
+kg:Dataset a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Dataset" ;
+    rdfs:comment "A collection of data or dataset" .
+
+# ============================================================================
+# Document Structure Classes
+# ============================================================================
+
+kg:Document a owl:Class ;
+    rdfs:label "Document" ;
+    rdfs:comment "A document that has been processed" .
+
+kg:DocumentChunk a owl:Class ;
+    rdfs:label "Document Chunk" ;
+    rdfs:comment "A chunk or segment of a document" .
+
+kg:VisualElement a owl:Class ;
+    rdfs:label "Visual Element" ;
+    rdfs:comment "A visual element (image, chart, diagram) in a document" .
+
+kg:Table a owl:Class ;
+    rdfs:subClassOf kg:VisualElement ;
+    rdfs:label "Table" ;
+    rdfs:comment "A table or structured data representation" .
+
+kg:Chart a owl:Class ;
+    rdfs:subClassOf kg:VisualElement ;
+    rdfs:label "Chart" ;
+    rdfs:comment "A chart, graph, or visualization" .
+
+kg:Image a owl:Class ;
+    rdfs:subClassOf kg:VisualElement ;
+    rdfs:label "Image" ;
+    rdfs:comment "An image or photograph" .
+
+kg:Diagram a owl:Class ;
+    rdfs:subClassOf kg:VisualElement ;
+    rdfs:label "Diagram" ;
+    rdfs:comment "A diagram or schematic representation" .
+
+kg:Formula a owl:Class ;
+    rdfs:label "Formula" ;
+    rdfs:comment "A mathematical formula or equation" .
+
+# ============================================================================
+# Relationship Properties
+# ============================================================================
+
+kg:relatedTo a owl:ObjectProperty ;
+    rdfs:label "related to" ;
+    rdfs:comment "A general relationship between entities" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:mentions a owl:ObjectProperty ;
+    rdfs:label "mentions" ;
+    rdfs:comment "A document or chunk mentions an entity" ;
+    rdfs:domain kg:Document ;
+    rdfs:range kg:Entity .
+
+kg:contains a owl:ObjectProperty ;
+    rdfs:label "contains" ;
+    rdfs:comment "A document contains a chunk or element" ;
+    rdfs:domain kg:Document ;
+    rdfs:range owl:Thing .
+
+kg:partOf a owl:ObjectProperty ;
+    rdfs:label "part of" ;
+    rdfs:comment "An entity is part of another entity" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:instanceOf a owl:ObjectProperty ;
+    rdfs:label "instance of" ;
+    rdfs:comment "An entity is an instance of a concept" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Concept .
+
+kg:uses a owl:ObjectProperty ;
+    rdfs:label "uses" ;
+    rdfs:comment "An entity uses another entity" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:implements a owl:ObjectProperty ;
+    rdfs:label "implements" ;
+    rdfs:comment "An entity implements a method or technology" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Method .
+
+kg:appliedTo a owl:ObjectProperty ;
+    rdfs:label "applied to" ;
+    rdfs:comment "A method is applied to an entity" ;
+    rdfs:domain kg:Method ;
+    rdfs:range kg:Entity .
+
+kg:authoredBy a owl:ObjectProperty ;
+    rdfs:label "authored by" ;
+    rdfs:comment "A publication is authored by a person" ;
+    rdfs:domain kg:Publication ;
+    rdfs:range kg:Person .
+
+kg:affiliatedWith a owl:ObjectProperty ;
+    rdfs:label "affiliated with" ;
+    rdfs:comment "A person is affiliated with an organization" ;
+    rdfs:domain kg:Person ;
+    rdfs:range kg:Organization .
+
+kg:locatedIn a owl:ObjectProperty ;
+    rdfs:label "located in" ;
+    rdfs:comment "An entity is located in a place" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Location .
+
+kg:occursAt a owl:ObjectProperty ;
+    rdfs:label "occurs at" ;
+    rdfs:comment "An event occurs at a location" ;
+    rdfs:domain kg:Event ;
+    rdfs:range kg:Location .
+
+kg:participatesIn a owl:ObjectProperty ;
+    rdfs:label "participates in" ;
+    rdfs:comment "An entity participates in an event" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Event .
+
+kg:derivedFrom a owl:ObjectProperty ;
+    rdfs:label "derived from" ;
+    rdfs:comment "An entity is derived from another entity" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:influences a owl:ObjectProperty ;
+    rdfs:label "influences" ;
+    rdfs:comment "An entity influences another entity" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:similarTo a owl:ObjectProperty ;
+    rdfs:label "similar to" ;
+    rdfs:comment "An entity is similar to another entity" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:oppositeOf a owl:ObjectProperty ;
+    rdfs:label "opposite of" ;
+    rdfs:comment "An entity is opposite to another entity" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:causes a owl:ObjectProperty ;
+    rdfs:label "causes" ;
+    rdfs:comment "An entity causes another entity or event" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+kg:resultOf a owl:ObjectProperty ;
+    rdfs:label "result of" ;
+    rdfs:comment "An entity is the result of another entity or process" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Entity .
+
+# ============================================================================
+# Data Properties
+# ============================================================================
+
+kg:hasName a owl:DatatypeProperty ;
+    rdfs:label "has name" ;
+    rdfs:comment "The name of an entity" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range xsd:string .
+
+kg:hasTitle a owl:DatatypeProperty ;
+    rdfs:label "has title" ;
+    rdfs:comment "The title of a document or publication" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasDescription a owl:DatatypeProperty ;
+    rdfs:label "has description" ;
+    rdfs:comment "A description of an entity" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasContent a owl:DatatypeProperty ;
+    rdfs:label "has content" ;
+    rdfs:comment "The textual content of a document chunk" ;
+    rdfs:domain kg:DocumentChunk ;
+    rdfs:range xsd:string .
+
+kg:hasConfidence a owl:DatatypeProperty ;
+    rdfs:label "has confidence" ;
+    rdfs:comment "The confidence score of an extracted relationship" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:decimal .
+
+kg:hasPageNumber a owl:DatatypeProperty ;
+    rdfs:label "has page number" ;
+    rdfs:comment "The page number where an entity appears" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:integer .
+
+kg:hasPosition a owl:DatatypeProperty ;
+    rdfs:label "has position" ;
+    rdfs:comment "The position or location within a document" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasDate a owl:DatatypeProperty ;
+    rdfs:label "has date" ;
+    rdfs:comment "A date associated with an entity or event" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:date .
+
+kg:hasTimestamp a owl:DatatypeProperty ;
+    rdfs:label "has timestamp" ;
+    rdfs:comment "A timestamp associated with processing" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:dateTime .
+
+kg:hasVersion a owl:DatatypeProperty ;
+    rdfs:label "has version" ;
+    rdfs:comment "The version of a technology or method" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasValue a owl:DatatypeProperty ;
+    rdfs:label "has value" ;
+    rdfs:comment "A numeric value associated with an entity" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:decimal .
+
+kg:hasUnit a owl:DatatypeProperty ;
+    rdfs:label "has unit" ;
+    rdfs:comment "The unit of measurement for a value" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasLatex a owl:DatatypeProperty ;
+    rdfs:label "has latex" ;
+    rdfs:comment "The LaTeX representation of a formula" ;
+    rdfs:domain kg:Formula ;
+    rdfs:range xsd:string .
+
+kg:hasUrl a owl:DatatypeProperty ;
+    rdfs:label "has URL" ;
+    rdfs:comment "A URL associated with an entity" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:anyURI .
+
+kg:hasKeyword a owl:DatatypeProperty ;
+    rdfs:label "has keyword" ;
+    rdfs:comment "A keyword associated with an entity" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasLanguage a owl:DatatypeProperty ;
+    rdfs:label "has language" ;
+    rdfs:comment "The language of text content" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasFormat a owl:DatatypeProperty ;
+    rdfs:label "has format" ;
+    rdfs:comment "The format of a document or data" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+# ============================================================================
+# Measurement and Quantification
+# ============================================================================
+
+kg:Measurement a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Measurement" ;
+    rdfs:comment "A measurement or quantification" .
+
+kg:Quantity a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Quantity" ;
+    rdfs:comment "A quantity or amount" .
+
+kg:hasNumericValue a owl:DatatypeProperty ;
+    rdfs:label "has numeric value" ;
+    rdfs:comment "The numeric value of a measurement" ;
+    rdfs:domain kg:Measurement ;
+    rdfs:range xsd:decimal .
+
+kg:hasMeasurement a owl:ObjectProperty ;
+    rdfs:label "has measurement" ;
+    rdfs:comment "An entity has a measurement" ;
+    rdfs:domain kg:Entity ;
+    rdfs:range kg:Measurement .
+
+# ============================================================================
+# Temporal Properties
+# ============================================================================
+
+kg:TemporalEntity a owl:Class ;
+    rdfs:subClassOf kg:Entity ;
+    rdfs:label "Temporal Entity" ;
+    rdfs:comment "An entity with temporal characteristics" .
+
+kg:hasStartDate a owl:DatatypeProperty ;
+    rdfs:label "has start date" ;
+    rdfs:comment "The start date of an event or period" ;
+    rdfs:domain kg:TemporalEntity ;
+    rdfs:range xsd:date .
+
+kg:hasEndDate a owl:DatatypeProperty ;
+    rdfs:label "has end date" ;
+    rdfs:comment "The end date of an event or period" ;
+    rdfs:domain kg:TemporalEntity ;
+    rdfs:range xsd:date .
+
+kg:hasDuration a owl:DatatypeProperty ;
+    rdfs:label "has duration" ;
+    rdfs:comment "The duration of an event or process" ;
+    rdfs:domain kg:TemporalEntity ;
+    rdfs:range xsd:duration .
+
+kg:before a owl:ObjectProperty ;
+    rdfs:label "before" ;
+    rdfs:comment "An entity occurs before another entity" ;
+    rdfs:domain kg:TemporalEntity ;
+    rdfs:range kg:TemporalEntity .
+
+kg:after a owl:ObjectProperty ;
+    rdfs:label "after" ;
+    rdfs:comment "An entity occurs after another entity" ;
+    rdfs:domain kg:TemporalEntity ;
+    rdfs:range kg:TemporalEntity .
+
+kg:during a owl:ObjectProperty ;
+    rdfs:label "during" ;
+    rdfs:comment "An entity occurs during another entity" ;
+    rdfs:domain kg:TemporalEntity ;
+    rdfs:range kg:TemporalEntity .
+
+# ============================================================================
+# Provenance and Metadata
+# ============================================================================
+
+kg:hasSource a owl:ObjectProperty ;
+    rdfs:label "has source" ;
+    rdfs:comment "The source document or chunk where information was extracted" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range kg:Document .
+
+kg:extractedBy a owl:DatatypeProperty ;
+    rdfs:label "extracted by" ;
+    rdfs:comment "The system or model that extracted this information" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasExtractionMethod a owl:DatatypeProperty ;
+    rdfs:label "has extraction method" ;
+    rdfs:comment "The method used to extract this information" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+kg:hasProcessingTimestamp a owl:DatatypeProperty ;
+    rdfs:label "has processing timestamp" ;
+    rdfs:comment "When this information was processed" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:dateTime .
+
+# ============================================================================
+# Document Processing Properties
+# ============================================================================
+
+kg:hasChunkIndex a owl:DatatypeProperty ;
+    rdfs:label "has chunk index" ;
+    rdfs:comment "The index of a chunk within a document" ;
+    rdfs:domain kg:DocumentChunk ;
+    rdfs:range xsd:integer .
+
+kg:hasTokenCount a owl:DatatypeProperty ;
+    rdfs:label "has token count" ;
+    rdfs:comment "The number of tokens in a text chunk" ;
+    rdfs:domain kg:DocumentChunk ;
+    rdfs:range xsd:integer .
+
+kg:hasChunkType a owl:DatatypeProperty ;
+    rdfs:label "has chunk type" ;
+    rdfs:comment "The type of document chunk" ;
+    rdfs:domain kg:DocumentChunk ;
+    rdfs:range xsd:string .
+
+kg:hasContext a owl:DatatypeProperty ;
+    rdfs:label "has context" ;
+    rdfs:comment "The inherited context for a chunk" ;
+    rdfs:domain kg:DocumentChunk ;
+    rdfs:range xsd:string .
+
+kg:generatesContext a owl:DatatypeProperty ;
+    rdfs:label "generates context" ;
+    rdfs:comment "Whether this chunk generates context for others" ;
+    rdfs:domain kg:DocumentChunk ;
+    rdfs:range xsd:boolean .
+
+# ============================================================================
+# Visual Element Properties
+# ============================================================================
+
+kg:hasCaption a owl:DatatypeProperty ;
+    rdfs:label "has caption" ;
+    rdfs:comment "The caption of a visual element" ;
+    rdfs:domain kg:VisualElement ;
+    rdfs:range xsd:string .
+
+kg:hasVisualDescription a owl:DatatypeProperty ;
+    rdfs:label "has visual description" ;
+    rdfs:comment "A description of what is shown in a visual element" ;
+    rdfs:domain kg:VisualElement ;
+    rdfs:range xsd:string .
+
+kg:hasImageType a owl:DatatypeProperty ;
+    rdfs:label "has image type" ;
+    rdfs:comment "The type of image (figure, chart, diagram, etc.)" ;
+    rdfs:domain kg:VisualElement ;
+    rdfs:range xsd:string .
+
+kg:hasBoundingBox a owl:DatatypeProperty ;
+    rdfs:label "has bounding box" ;
+    rdfs:comment "The bounding box coordinates of a visual element" ;
+    rdfs:domain kg:VisualElement ;
+    rdfs:range xsd:string .
+
+kg:hasWidth a owl:DatatypeProperty ;
+    rdfs:label "has width" ;
+    rdfs:comment "The width of a visual element" ;
+    rdfs:domain kg:VisualElement ;
+    rdfs:range xsd:decimal .
+
+kg:hasHeight a owl:DatatypeProperty ;
+    rdfs:label "has height" ;
+    rdfs:comment "The height of a visual element" ;
+    rdfs:domain kg:VisualElement ;
+    rdfs:range xsd:decimal .
+
+# ============================================================================
+# Validation and Quality
+# ============================================================================
+
+kg:hasQualityScore a owl:DatatypeProperty ;
+    rdfs:label "has quality score" ;
+    rdfs:comment "A quality score for extracted information" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:decimal .
+
+kg:isValidated a owl:DatatypeProperty ;
+    rdfs:label "is validated" ;
+    rdfs:comment "Whether the extracted information has been validated" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:boolean .
+
+kg:hasValidationMethod a owl:DatatypeProperty ;
+    rdfs:label "has validation method" ;
+    rdfs:comment "The method used to validate the information" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+# ============================================================================
+# End of Ontology
+# ============================================================================

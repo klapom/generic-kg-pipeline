@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import yaml
 from pydantic import BaseModel, Field, validator
@@ -62,17 +62,97 @@ class LLMConfig(BaseModel):
     ollama: OllamaConfig = OllamaConfig()
 
 
-class ChunkingConfig(BaseModel):
-    """Configuration for document chunking"""
+class ContextInheritanceConfig(BaseModel):
+    """Configuration for context inheritance"""
+    enabled: bool = True
+    max_context_tokens: int = 300
+    min_context_tokens: int = 50
+    context_decay_rate: float = 0.1
+    refresh_after_chunks: int = 6
+    context_quality_threshold: float = 0.7
+    
+    @validator("context_decay_rate")
+    def validate_decay_rate(cls, v):
+        if not 0 <= v <= 1:
+            raise ValueError("context_decay_rate must be between 0 and 1")
+        return v
+
+
+class DocumentStrategyConfig(BaseModel):
+    """Configuration for document-specific chunking strategy"""
+    method: str = "structure_aware"
     max_tokens: int = 2000
-    overlap_ratio: float = 0.2
-    preserve_context: bool = True
+    min_tokens: int = 200
+    context_inheritance: bool = True
+    group_by: str = "sections"
+    max_group_size: int = 8
+    min_group_size: int = 2
+    overlap_ratio: float = 0.15
+    preserve_structure: bool = True
     
     @validator("overlap_ratio")
     def validate_overlap_ratio(cls, v):
         if not 0 <= v <= 0.5:
             raise ValueError("overlap_ratio must be between 0 and 0.5")
         return v
+
+
+class ChunkingStrategiesConfig(BaseModel):
+    """Configuration for different document type strategies"""
+    pdf: DocumentStrategyConfig = DocumentStrategyConfig(
+        method="structure_aware",
+        max_tokens=2000,
+        group_by="sections",
+        respect_visual_boundaries=True
+    )
+    docx: DocumentStrategyConfig = DocumentStrategyConfig(
+        method="structure_aware",
+        max_tokens=1500,
+        group_by="headings",
+        respect_tables=True
+    )
+    xlsx: DocumentStrategyConfig = DocumentStrategyConfig(
+        method="sheet_aware",
+        max_tokens=1000,
+        group_by="sheets",
+        preserve_data_structure=True
+    )
+    pptx: DocumentStrategyConfig = DocumentStrategyConfig(
+        method="slide_aware",
+        max_tokens=800,
+        group_by="topics",
+        preserve_slide_context=True
+    )
+
+
+class VisualIntegrationConfig(BaseModel):
+    """Configuration for visual element integration"""
+    include_vlm_descriptions: bool = True
+    include_extracted_data: bool = True
+    max_visuals_per_chunk: int = 3
+    visual_context_weight: float = 0.3
+    separate_visual_chunks: bool = False
+
+
+class ChunkingConfig(BaseModel):
+    """Enhanced configuration for document chunking with context inheritance"""
+    default_strategy: str = "structure_aware"
+    enable_context_inheritance: bool = True
+    
+    # Strategy configurations
+    strategies: ChunkingStrategiesConfig = ChunkingStrategiesConfig()
+    
+    # Context inheritance settings
+    context_inheritance: ContextInheritanceConfig = ContextInheritanceConfig()
+    
+    # Visual integration settings
+    visual_integration: VisualIntegrationConfig = VisualIntegrationConfig()
+    
+    # Performance settings
+    enable_async_processing: bool = True
+    max_concurrent_groups: int = 5
+    enable_context_caching: bool = True
+    cache_ttl_minutes: int = 60
 
 
 class TripleStoreConfig(BaseModel):
@@ -109,6 +189,29 @@ class DomainConfig(BaseModel):
     enabled_formats: list[str] = ["pdf", "docx", "xlsx", "txt"]
 
 
+class VLLMConfig(BaseModel):
+    """Configuration for vLLM"""
+    gpu_memory_utilization: float = 0.2
+    max_concurrent_models: int = 2
+    enable_model_caching: bool = True
+    
+    smoldocling: dict = {}
+    qwen25_vl: dict = {}
+
+
+class BatchProcessingConfig(BaseModel):
+    """Configuration for batch processing"""
+    default_mode: str = "vllm"
+    max_concurrent: int = 3
+    timeout_seconds: int = 600
+    enable_chunking: bool = True
+    enable_context_inheritance: bool = True
+    enable_visual_analysis: bool = True
+    auto_gpu_memory_optimization: bool = True
+    model_warmup_enabled: bool = True
+    cleanup_after_batch: bool = True
+
+
 class Config(BaseSettings):
     """Main configuration class"""
     domain: DomainConfig = DomainConfig()
@@ -117,6 +220,8 @@ class Config(BaseSettings):
     chunking: ChunkingConfig = ChunkingConfig()
     storage: StorageConfig = StorageConfig()
     rag: RAGConfig = RAGConfig()
+    vllm: VLLMConfig = VLLMConfig()
+    batch_processing: BatchProcessingConfig = BatchProcessingConfig()
     
     class Config:
         env_file = ".env"
@@ -184,3 +289,30 @@ def get_config(config_path: Optional[Path] = None) -> Config:
         _config.validate_config()
     
     return _config
+
+
+def load_chunking_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load chunking configuration from YAML file"""
+    if config_path is None:
+        config_path = Path("config/chunking.yaml")
+    
+    if not config_path.exists():
+        raise FileNotFoundError(f"Chunking configuration file not found: {config_path}")
+    
+    with open(config_path, "r") as f:
+        yaml_content = f.read()
+    
+    # Substitute environment variables
+    import re
+    pattern = r'\$\{([^}]+)\}'
+    
+    def replace_env_var(match):
+        var_name = match.group(1)
+        return os.environ.get(var_name, match.group(0))
+    
+    yaml_content = re.sub(pattern, replace_env_var, yaml_content)
+    
+    # Parse YAML
+    config_dict = yaml.safe_load(yaml_content)
+    
+    return config_dict
