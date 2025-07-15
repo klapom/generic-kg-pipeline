@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from plugins.parsers.base_parser import Document, DocumentType
-from core.config import load_chunking_config
+from core.config_new.unified_manager import get_config
 from core.chunking import (
     ContextualChunk,
     ContextGroup,
@@ -38,7 +38,11 @@ class ContentChunker:
         
         # Load configuration
         if config is None:
-            config = load_chunking_config()
+            # Use new unified config
+            unified_config = get_config()
+            config = {
+                "chunking": unified_config.chunking.dict()
+            }
         
         self.config = config
         self.chunking_config = config.get("chunking", {})
@@ -48,10 +52,14 @@ class ContentChunker:
         self.context_grouper = ContextGrouper(config)
         self.context_summarizer = ContextSummarizer(config)
         
-        # Settings
-        self.enable_context_inheritance = self.chunking_config.get("enable_context_inheritance", True)
-        self.enable_async_processing = self.chunking_config.get("performance", {}).get("enable_async_processing", True)
-        self.max_concurrent_groups = self.chunking_config.get("performance", {}).get("max_concurrent_groups", 5)
+        # Settings - now using unified config structure
+        context_config = self.chunking_config.get("context", {})
+        self.enable_context_inheritance = context_config.get("inherit_metadata", True)
+        
+        # Performance settings (not in unified config yet, use defaults)
+        performance_config = self.chunking_config.get("performance", {})
+        self.enable_async_processing = performance_config.get("enable_async_processing", True)
+        self.max_concurrent_groups = performance_config.get("max_concurrent_groups", 5)
         
         logger.info(f"Initialized ContentChunker with context inheritance: {self.enable_context_inheritance}")
     

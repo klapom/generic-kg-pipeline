@@ -1,0 +1,286 @@
+# Generic Knowledge Graph Pipeline - Unified Configuration
+# Version: 1.0.0
+# 
+# Diese Datei ersetzt: default.yaml, chunking.yaml, .env und hardcoded Werte
+# Alle Werte können durch Environment-Variablen überschrieben werden: ${VAR:default}
+
+# Profil-Auswahl (dev, test, prod)
+profile: ${PROFILE:dev}
+
+# Allgemeine Einstellungen
+general:
+  name: "Generic Knowledge Graph Pipeline"
+  version: "1.0.0"
+  debug: ${DEBUG:false}
+  log_level: ${LOG_LEVEL:INFO}
+  
+# Domain-Konfiguration
+domain:
+  name: ${DOMAIN_NAME:general}
+  ontology_path: "plugins/ontologies/${domain.name}.ttl"
+  enabled_formats: 
+    - pdf
+    - docx
+    - xlsx
+    - pptx
+    - txt
+
+# Service-Endpoints (zentral für alle Services)
+services:
+  # vLLM Service
+  vllm:
+    url: ${VLLM_URL:http://localhost:8002}
+    timeout: ${VLLM_TIMEOUT:300}
+    health_check_enabled: true
+    retry_attempts: 3
+    
+  # Hochschul-LLM
+  hochschul_llm:
+    url: ${HOCHSCHUL_LLM_URL:http://localhost:8001}
+    api_key: ${HOCHSCHUL_LLM_API_KEY:}
+    timeout: ${HOCHSCHUL_LLM_TIMEOUT:60}
+    model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    
+  # Triple Store (Fuseki)
+  fuseki:
+    url: ${FUSEKI_URL:http://localhost:3030}
+    dataset: ${FUSEKI_DATASET:kg_dataset}
+    timeout: 30
+    
+  # Vector Store (ChromaDB)
+  chromadb:
+    url: ${CHROMADB_URL:http://localhost:8000}
+    collection: ${CHROMADB_COLLECTION:documents}
+    
+  # Ollama (Fallback)
+  ollama:
+    url: ${OLLAMA_URL:http://localhost:11434}
+    model: ${OLLAMA_MODEL:llama2}
+    enabled: ${OLLAMA_ENABLED:false}
+
+# Modell-Konfiguration
+models:
+  # Haupt-LLM Einstellungen
+  llm:
+    provider: ${LLM_PROVIDER:hochschul}  # hochschul, ollama, openai
+    temperature: ${LLM_TEMPERATURE:0.1}
+    max_tokens: ${LLM_MAX_TOKENS:4000}
+    top_p: ${LLM_TOP_P:0.9}
+    stream: false
+    
+  # Vision-Language Models
+  vision:
+    # SmolDocling für Dokumentenanalyse
+    smoldocling:
+      enabled: ${SMOLDOCLING_ENABLED:true}
+      model_id: "numinamath/SmolDocling-256M-Preview"
+      gpu_memory_utilization: ${SMOLDOCLING_GPU_MEMORY:0.2}
+      max_pages: ${SMOLDOCLING_MAX_PAGES:15}
+      dtype: "float16"
+      trust_remote_code: true
+      
+    # Qwen2.5-VL für Bildanalyse
+    qwen_vl:
+      enabled: ${QWEN_VL_ENABLED:true}
+      model_id: "Qwen/Qwen2-VL-7B-Instruct"
+      gpu_memory_utilization: ${QWEN_VL_GPU_MEMORY:0.8}
+      max_image_size: 1024
+
+# Parser-Konfiguration
+parsing:
+  # PDF-spezifische Einstellungen
+  pdf:
+    provider: ${PDF_PARSER:hybrid}  # native, hybrid, smoldocling
+    pdfplumber_mode: ${PDFPLUMBER_MODE:1}  # 0=never, 1=fallback, 2=always
+    
+    # Layout-Einstellungen
+    layout:
+      use_layout: true
+      table_x_tolerance: 3
+      table_y_tolerance: 3
+      text_x_tolerance: 5
+      text_y_tolerance: 5
+      
+    # Complex Layout Detection
+    complex_detection:
+      enabled: true
+      min_text_blocks: 2
+      min_tables: 1
+      coverage_threshold: 0.8
+      
+    # Tabellen-Extraktion
+    table_extraction:
+      enabled: true
+      separate_tables: true
+      preserve_structure: true
+      
+  # Office-Dokumente
+  office:
+    preserve_formatting: true
+    extract_images: true
+    extract_tables: true
+    
+  # Allgemeine Parser-Einstellungen
+  common:
+    max_file_size_mb: ${MAX_FILE_SIZE:100}
+    timeout_seconds: 120
+    encoding: "utf-8"
+    language_detection: true
+
+# Chunking-Konfiguration
+chunking:
+  # Standard-Strategie
+  default:
+    strategy: ${CHUNKING_STRATEGY:semantic}
+    chunk_size: ${CHUNK_SIZE:1000}
+    chunk_overlap: ${CHUNK_OVERLAP:200}
+    
+  # Format-spezifische Strategien
+  strategies:
+    pdf:
+      preserve_tables: true
+      table_as_single_chunk: true
+      respect_page_boundaries: true
+      max_chunk_size: 1500
+      
+    docx:
+      respect_headings: true
+      preserve_lists: true
+      
+    xlsx:
+      by_sheet: true
+      include_headers: true
+      
+    txt:
+      split_by: "sentence"  # sentence, paragraph, tokens
+      min_chunk_size: 100
+      
+  # Kontext-Vererbung
+  context:
+    inherit_metadata: true
+    max_inheritance_depth: 3
+    include_visual_context: true
+
+# Triple-Generierung
+triples:
+  # Generierungs-Einstellungen
+  generation:
+    batch_size: ${TRIPLE_BATCH_SIZE:10}
+    context_window: 2000
+    include_metadata: true
+    use_coreferences: true
+    
+  # Extraktions-Patterns
+  extraction:
+    patterns:
+      - "entity_relation_entity"
+      - "subject_predicate_object"
+    confidence_threshold: 0.7
+    min_triple_length: 3
+    
+  # Validierung
+  validation:
+    check_ontology: true
+    allow_new_predicates: false
+
+# Storage-Konfiguration
+storage:
+  # Verzeichnisse
+  directories:
+    output: ${OUTPUT_DIR:data/output}
+    processed: ${PROCESSED_DIR:data/processed}
+    temp: ${TEMP_DIR:/tmp/kg_pipeline}
+    logs: ${LOG_DIR:logs}
+    
+  # Datei-Handling
+  files:
+    keep_processed: true
+    compression: false
+    timestamp_format: "%Y%m%d_%H%M%S"
+
+# Batch-Processing
+batch:
+  # Worker-Einstellungen
+  processing:
+    max_workers: ${MAX_WORKERS:4}
+    queue_size: 100
+    chunk_timeout: 300
+    
+  # Retry-Logic
+  retry:
+    max_attempts: 3
+    delay_seconds: 5
+    exponential_backoff: true
+    
+  # Ressourcen-Management
+  resources:
+    memory_limit_gb: 8
+    cpu_limit: 4
+
+# Templates und Prompts
+templates:
+  # Pfade
+  paths:
+    base: "plugins/templates"
+    custom: ${CUSTOM_TEMPLATES_PATH:}
+    
+  # Template-Auswahl
+  active:
+    triple_extraction: "kg_extraction_prompt.txt"
+    context_generation: "context_generation.txt"
+    task_with_context: "task_with_context.txt"
+
+# Feature-Flags
+features:
+  # Analyse-Features
+  visual_analysis: ${ENABLE_VISUAL_ANALYSIS:true}
+  table_extraction: ${ENABLE_TABLE_EXTRACTION:true}
+  context_enhancement: ${ENABLE_CONTEXT:true}
+  
+  # Experimentelle Features
+  rag_generation: ${ENABLE_RAG:false}
+  multi_language: ${ENABLE_MULTILANG:false}
+  
+  # Performance-Features
+  caching: ${ENABLE_CACHING:true}
+  parallel_processing: ${ENABLE_PARALLEL:true}
+
+# Monitoring und Logging
+monitoring:
+  # Metriken
+  metrics:
+    enabled: ${METRICS_ENABLED:false}
+    port: ${METRICS_PORT:9090}
+    interval_seconds: 30
+    
+  # Health Checks
+  health:
+    enabled: true
+    interval_seconds: 60
+    timeout_seconds: 10
+    
+  # Logging
+  logging:
+    structured: true
+    include_context: true
+    max_file_size_mb: 100
+    retention_days: 7
+
+# API-Konfiguration
+api:
+  # Server-Einstellungen
+  server:
+    host: ${API_HOST:0.0.0.0}
+    port: ${API_PORT:8000}
+    workers: ${API_WORKERS:4}
+    
+  # Sicherheit
+  security:
+    cors_enabled: true
+    cors_origins: ["*"]
+    rate_limiting: false
+    
+  # Dokumentation
+  docs:
+    enabled: true
+    path: "/docs"

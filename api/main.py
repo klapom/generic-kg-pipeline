@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from core.config import get_config
+from core.config_new.unified_manager import get_config
+from core.config_new.hot_reload import enable_hot_reload, disable_hot_reload
 from api.routers import documents, pipeline, query, health
 
 # Configure logging
@@ -47,16 +48,20 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Generic Knowledge Graph Pipeline System")
     config = get_config()
     
-    # Validate configuration
-    try:
-        config.validate_config()
-        logger.info("Configuration validated successfully")
-    except Exception as e:
-        logger.error(f"Configuration validation failed: {e}")
-        raise
+    # Configuration is automatically validated by Pydantic
+    logger.info("Configuration loaded successfully")
+    logger.info(f"Profile: {config.profile}")
+    logger.info(f"Debug mode: {config.general.debug}")
     
     # Initialize services (placeholder for actual service initialization)
     logger.info("Initializing services...")
+    
+    # Enable hot-reload for configuration
+    if config.general.debug:
+        logger.info("🔄 Enabling config hot-reload (debug mode)")
+        await enable_hot_reload(check_interval=3.0)  # Check every 3 seconds in debug
+    else:
+        logger.info("📌 Config hot-reload disabled (production mode)")
     
     # Check service connectivity
     services_status = await check_services_health()
@@ -66,6 +71,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down Generic Knowledge Graph Pipeline System")
+    
+    # Disable hot-reload
+    await disable_hot_reload()
 
 
 async def check_services_health() -> Dict[str, str]:

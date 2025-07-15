@@ -5,11 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
 from plugins.parsers.base_parser import BaseParser, DocumentType, ParseError
-from plugins.parsers.docx_parser import DOCXParser
-from plugins.parsers.pdf_parser import PDFParser
-from plugins.parsers.pptx_parser import PPTXParser
-from plugins.parsers.xlsx_parser import XLSXParser
-from plugins.parsers.txt_parser import TXTParser
+# All parsers will be imported dynamically to avoid circular dependency
+# TXTParser will be imported dynamically to avoid circular dependency
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +30,39 @@ class ParserFactory:
         self.config = config or {}
         self.enable_vlm = enable_vlm
         
-        # Register available parsers
-        self._parsers: Dict[DocumentType, Type[BaseParser]] = {
-            DocumentType.PDF: PDFParser,
-            DocumentType.DOCX: DOCXParser,
-            DocumentType.XLSX: XLSXParser,
-            DocumentType.PPTX: PPTXParser,
-            DocumentType.TXT: TXTParser
-        }
+        # Register available parsers - all loaded dynamically
+        self._parsers: Dict[DocumentType, Type[BaseParser]] = {}
+        
+        # Load parsers dynamically to avoid circular imports
+        try:
+            from core.parsers.implementations.pdf import PDFParser
+            self._parsers[DocumentType.PDF] = PDFParser
+        except ImportError:
+            logger.warning("PDFParser not available")
+            
+        try:
+            from core.parsers.implementations.text import TXTParser
+            self._parsers[DocumentType.TXT] = TXTParser
+        except ImportError:
+            logger.warning("TXTParser not available")
+            
+        try:
+            from core.parsers.implementations.office import DOCXParser
+            self._parsers[DocumentType.DOCX] = DOCXParser
+        except ImportError:
+            logger.warning("DOCXParser not available")
+            
+        try:
+            from core.parsers.implementations.office import XLSXParser
+            self._parsers[DocumentType.XLSX] = XLSXParser
+        except ImportError:
+            logger.warning("XLSXParser not available")
+            
+        try:
+            from core.parsers.implementations.office import PPTXParser
+            self._parsers[DocumentType.PPTX] = PPTXParser
+        except ImportError:
+            logger.warning("PPTXParser not available")
         
         # Parser instances cache
         self._parser_instances: Dict[DocumentType, BaseParser] = {}

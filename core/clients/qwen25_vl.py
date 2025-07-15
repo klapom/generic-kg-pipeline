@@ -1,10 +1,11 @@
-"""Qwen2.5-VL client for visual analysis and description"""
+"""
+Qwen2.5-VL client for visual analysis and description
+Modernized with standardized BaseModelClient architecture
+"""
 
-import asyncio
 import base64
 import json
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from typing import Any, Dict, List, Optional
@@ -13,12 +14,14 @@ from openai import AsyncOpenAI
 from PIL import Image
 from pydantic import BaseModel
 
-from core.config import get_config
+from core.clients.base import BaseModelClient, BatchProcessingMixin
+from core.config_new.unified_manager import get_config
 from plugins.parsers.base_parser import VisualElementType
 
 logger = logging.getLogger(__name__)
 
 
+# Data Models
 class VisualAnalysisConfig(BaseModel):
     """Configuration for visual analysis"""
     model: str = "qwen2.5-vl-72b"
@@ -28,65 +31,77 @@ class VisualAnalysisConfig(BaseModel):
     max_retries: int = 3
     retry_delay_seconds: float = 1.0
     batch_size: int = 3
-    max_image_size: int = 1024  # Max dimension in pixels
-    image_quality: int = 85  # JPEG quality for compression
+    max_image_size: int = 1024
+    image_quality: int = 85
 
 
-@dataclass
-class VisualAnalysisResult:
+class VisualAnalysisResult(BaseModel):
     """Result of visual analysis from Qwen2.5-VL"""
     description: str
-    confidence: float
+    confidence: float = 0.0
     extracted_data: Optional[Dict[str, Any]] = None
     element_type_detected: Optional[VisualElementType] = None
     ocr_text: Optional[str] = None
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = {}
     processing_time_seconds: float = 0.0
     success: bool = True
     error_message: Optional[str] = None
+
+
+class VisualAnalysisRequest(BaseModel):
+    """Request for visual analysis"""
+    image_data: bytes
+    document_context: Optional[Dict[str, Any]] = None
+    element_type: Optional[VisualElementType] = None
+    analysis_focus: str = "comprehensive"  # comprehensive, ocr, chart_data, description
     
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
+    class Config:
+        # Allow bytes type
+        arbitrary_types_allowed = True
 
 
-class Qwen25VLClient:
+class Qwen25VLClient(BaseModelClient[VisualAnalysisRequest, VisualAnalysisResult, VisualAnalysisConfig],
+                    BatchProcessingMixin):
     """
-    Client for Qwen2.5-VL visual analysis
+    Modernized client for Qwen2.5-VL visual analysis
     
     Handles image/chart/diagram analysis using Qwen2.5-VL model
     for multi-modal document understanding
+    
+    Benefits over original:
+    - Automatic retry logic for API failures
+    - Standardized health checks
+    - Built-in metrics collection
+    - Batch image processing support
+    - Unified error handling
     """
     
     def __init__(self, config: Optional[VisualAnalysisConfig] = None):
-        """Initialize the Qwen2.5-VL client"""
-        self.config = config or VisualAnalysisConfig()
+        """Initialize with special handling for OpenAI client"""
+        self._openai_client = None
+        # Use hochschul_llm service config (they share the same endpoint)
+        super().__init__("hochschul_llm", config=config)
         
-        # Get configuration - reuse Hochschul-LLM endpoint for Qwen2.5-VL
-        system_config = get_config()
-        
-        if not system_config.llm.hochschul:
-            raise ValueError("Hochschul-LLM configuration not found. Qwen2.5-VL uses the same endpoint.")
-        
-        # Initialize OpenAI client with Qwen2.5-VL endpoint
-        self.client = AsyncOpenAI(
-            api_key=system_config.llm.hochschul.api_key,
-            base_url=system_config.llm.hochschul.endpoint,
-            timeout=self.config.timeout_seconds,
-            max_retries=self.config.max_retries
-        )
-        
-        self.endpoint = system_config.llm.hochschul.endpoint
-        
-        logger.info(f"Initialized Qwen2.5-VL client: {self.endpoint}")
+    def _get_default_config(self) -> VisualAnalysisConfig:
+        """Default configuration for visual analysis"""
+        return VisualAnalysisConfig()
     
-    async def __aenter__(self):
-        """Async context manager entry"""
-        return self
+    def _initialize_openai_client(self):
+        """Initialize OpenAI client if not already done"""
+        if self._openai_client is None:
+            system_config = get_config()
+            self._openai_client = AsyncOpenAI(
+                api_key=system_config.services.hochschul_llm.api_key,
+                base_url=self.endpoint,
+                timeout=self.timeout,
+                max_retries=0  # We handle retries in BaseModelClient
+            )
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
-        await self.client.close()
+    async def close(self):
+        """Close connections"""
+        if self._openai_client:
+            await self._openai_client.close()
+        await super().close()
     
     def _preprocess_image(self, image_data: bytes) -> bytes:
         """Preprocess image for optimal VLM analysis"""
@@ -113,50 +128,41 @@ class Qwen25VLClient:
             logger.warning(f"Image preprocessing failed: {e}")
             return image_data  # Return original if preprocessing fails
     
-    async def analyze_visual(
-        self,
-        image_data: bytes,
-        document_context: Optional[Dict[str, Any]] = None,
-        element_type: Optional[VisualElementType] = None,
-        analysis_focus: str = "comprehensive"
-    ) -> VisualAnalysisResult:
+    async def _process_internal(self, request: VisualAnalysisRequest) -> VisualAnalysisResult:
         """
-        Analyze a visual element using Qwen2.5-VL
+        Internal visual analysis processing
         
         Args:
-            image_data: Raw image bytes
-            document_context: Context about the document
-            element_type: Hint about the type of visual element
-            analysis_focus: Type of analysis (comprehensive, ocr, chart_data, description)
+            request: Image data and analysis parameters
             
         Returns:
-            VisualAnalysisResult with analysis details
+            Analysis result
         """
+        self._initialize_openai_client()
         start_time = datetime.now()
         
         try:
             # Preprocess image
-            processed_image = self._preprocess_image(image_data)
+            processed_image = self._preprocess_image(request.image_data)
             image_base64 = base64.b64encode(processed_image).decode('utf-8')
             
             # Build analysis prompt
             prompt = self._build_visual_analysis_prompt(
-                document_context, element_type, analysis_focus
+                request.document_context,
+                request.element_type,
+                request.analysis_focus
             )
             
-            logger.info(f"Analyzing visual element with Qwen2.5-VL (focus: {analysis_focus})")
+            logger.info(f"Analyzing visual element with Qwen2.5-VL (focus: {request.analysis_focus})")
             
             # Call Qwen2.5-VL
-            response = await self.client.chat.completions.create(
+            response = await self._openai_client.chat.completions.create(
                 model=self.config.model,
                 messages=[
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "text",
-                                "text": prompt
-                            },
+                            {"type": "text", "text": prompt},
                             {
                                 "type": "image_url",
                                 "image_url": {
@@ -166,359 +172,230 @@ class Qwen25VLClient:
                         ]
                     }
                 ],
-                max_tokens=self.config.max_tokens,
                 temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
                 response_format={"type": "json_object"}
             )
             
+            # Parse response
+            result_json = json.loads(response.choices[0].message.content)
+            
             processing_time = (datetime.now() - start_time).total_seconds()
             
-            # Parse the response
-            analysis_result = self._parse_visual_analysis_response(
-                response, processing_time, element_type
-            )
-            
-            logger.info(f"Visual analysis completed: {analysis_result.description[:100]}... "
-                       f"(confidence: {analysis_result.confidence:.2f})")
-            
-            return analysis_result
-            
-        except Exception as e:
-            processing_time = (datetime.now() - start_time).total_seconds()
-            logger.error(f"Visual analysis failed: {e}", exc_info=True)
-            
             return VisualAnalysisResult(
-                description=f"Analysis failed: {str(e)}",
-                confidence=0.0,
-                processing_time_seconds=processing_time,
-                success=False,
-                error_message=str(e)
-            )
-    
-    def _build_visual_analysis_prompt(
-        self,
-        document_context: Optional[Dict[str, Any]] = None,
-        element_type: Optional[VisualElementType] = None,
-        analysis_focus: str = "comprehensive"
-    ) -> str:
-        """Build the prompt for visual analysis"""
-        
-        prompt_parts = [
-            "Analyze this visual element and provide a detailed description in JSON format.",
-            "",
-            "Required JSON structure:",
-            "```json",
-            "{",
-            '  "description": "Detailed description of the visual content",',
-            '  "element_type": "image|chart|diagram|graph|table|screenshot|drawing|map",',
-            '  "confidence": 0.95,',
-            '  "ocr_text": "Any readable text in the image",',
-            '  "extracted_data": {',
-            '    "chart_type": "bar|line|pie|scatter|etc",',
-            '    "data_points": ["array", "of", "values"],',
-            '    "labels": ["x-axis", "y-axis", "legend"],',
-            '    "key_insights": ["insight1", "insight2"]',
-            '  },',
-            '  "metadata": {',
-            '    "colors_used": ["color1", "color2"],',
-            '    "layout": "description of layout",',
-            '    "quality_assessment": "high|medium|low"',
-            '  }',
-            "}",
-            "```",
-            "",
-            "Analysis Guidelines:",
-        ]
-        
-        # Add analysis focus specific instructions
-        if analysis_focus == "comprehensive":
-            prompt_parts.extend([
-                "- Provide a complete description of all visual elements",
-                "- Extract any text, data, or structured information",
-                "- Identify the type and purpose of the visual element",
-                "- Note any relationships or patterns in the data"
-            ])
-        elif analysis_focus == "ocr":
-            prompt_parts.extend([
-                "- Focus primarily on extracting readable text",
-                "- Preserve the layout and structure of text",
-                "- Include formatting information if relevant"
-            ])
-        elif analysis_focus == "chart_data":
-            prompt_parts.extend([
-                "- Focus on extracting structured data from charts/graphs",
-                "- Identify data series, values, and trends",
-                "- Extract axis labels, legends, and data points",
-                "- Provide insights about the data trends"
-            ])
-        else:  # description
-            prompt_parts.extend([
-                "- Provide a clear, detailed description of what is shown",
-                "- Focus on the visual content and its meaning",
-                "- Explain the context and purpose if apparent"
-            ])
-        
-        # Add element type hint if provided
-        if element_type:
-            prompt_parts.extend([
-                "",
-                f"Element type hint: This appears to be a {element_type.value}",
-                "Consider this hint but verify based on the actual visual content."
-            ])
-        
-        # Add document context if provided
-        if document_context:
-            prompt_parts.extend([
-                "",
-                "Document Context:"
-            ])
-            
-            if "document_title" in document_context:
-                prompt_parts.append(f"- Document: {document_context['document_title']}")
-            if "section" in document_context:
-                prompt_parts.append(f"- Section: {document_context['section']}")
-            if "surrounding_text" in document_context:
-                prompt_parts.append(f"- Context: {document_context['surrounding_text']}")
-            if "document_type" in document_context:
-                prompt_parts.append(f"- Type: {document_context['document_type']}")
-            
-            prompt_parts.append("Use this context to provide more relevant and accurate analysis.")
-        
-        prompt_parts.extend([
-            "",
-            "Provide accurate, detailed analysis in the JSON format above:"
-        ])
-        
-        return "\n".join(prompt_parts)
-    
-    def _parse_visual_analysis_response(
-        self,
-        response,
-        processing_time: float,
-        suggested_type: Optional[VisualElementType] = None
-    ) -> VisualAnalysisResult:
-        """Parse the response from Qwen2.5-VL"""
-        
-        try:
-            # Get response content
-            if not response.choices or not response.choices[0].message.content:
-                raise ValueError("Empty response from Qwen2.5-VL")
-            
-            content = response.choices[0].message.content.strip()
-            
-            # Parse JSON response
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                # Try to extract JSON from markdown code block
-                if "```json" in content:
-                    json_start = content.find("```json") + 7
-                    json_end = content.find("```", json_start)
-                    if json_end != -1:
-                        data = json.loads(content[json_start:json_end].strip())
-                    else:
-                        raise
-                else:
-                    raise
-            
-            # Extract analysis data
-            description = data.get("description", "No description provided")
-            confidence = float(data.get("confidence", 0.0))
-            ocr_text = data.get("ocr_text")
-            extracted_data = data.get("extracted_data")
-            metadata = data.get("metadata", {})
-            
-            # Determine element type
-            element_type_str = data.get("element_type", "unknown_visual")
-            element_type_detected = None
-            
-            try:
-                # Try to map string to VisualElementType
-                for vtype in VisualElementType:
-                    if vtype.value == element_type_str:
-                        element_type_detected = vtype
-                        break
-                
-                if not element_type_detected:
-                    element_type_detected = VisualElementType.UNKNOWN_VISUAL
-                    
-            except Exception:
-                element_type_detected = suggested_type or VisualElementType.UNKNOWN_VISUAL
-            
-            # Add usage information if available
-            if response.usage:
-                metadata["token_usage"] = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens
-                }
-            
-            return VisualAnalysisResult(
-                description=description,
-                confidence=confidence,
-                extracted_data=extracted_data,
-                element_type_detected=element_type_detected,
-                ocr_text=ocr_text,
-                metadata=metadata,
+                description=result_json.get("description", ""),
+                confidence=result_json.get("confidence", 0.8),
+                extracted_data=result_json.get("extracted_data"),
+                element_type_detected=self._detect_element_type(result_json),
+                ocr_text=result_json.get("ocr_text"),
+                metadata={
+                    "model": self.config.model,
+                    "focus": request.analysis_focus,
+                    "image_size": len(processed_image),
+                    "tokens_used": response.usage.total_tokens
+                },
                 processing_time_seconds=processing_time,
                 success=True
             )
             
         except Exception as e:
-            logger.error(f"Failed to parse visual analysis response: {e}")
+            logger.error(f"Visual analysis failed: {e}")
             return VisualAnalysisResult(
-                description=f"Response parsing failed: {str(e)}",
+                description="",
                 confidence=0.0,
-                processing_time_seconds=processing_time,
+                processing_time_seconds=(datetime.now() - start_time).total_seconds(),
                 success=False,
-                error_message=f"Response parsing failed: {str(e)}"
+                error_message=str(e)
             )
     
-    async def analyze_visuals_batch(
-        self,
-        visual_data_list: List[bytes],
-        document_context: Optional[Dict[str, Any]] = None,
-        element_types: Optional[List[VisualElementType]] = None,
-        analysis_focus: str = "comprehensive"
-    ) -> List[VisualAnalysisResult]:
+    async def _health_check_internal(self) -> Dict[str, Any]:
+        """Qwen2.5-VL specific health check"""
+        self._initialize_openai_client()
+        
+        # Create a simple test image (1x1 white pixel)
+        test_image = Image.new('RGB', (1, 1), color='white')
+        img_buffer = BytesIO()
+        test_image.save(img_buffer, format='JPEG')
+        img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+        
+        # Test with simple visual query
+        response = await self._openai_client.chat.completions.create(
+            model=self.config.model,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What do you see?"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
+                ]
+            }],
+            max_tokens=10,
+            temperature=0
+        )
+        
+        return {
+            "model_available": True,
+            "model_name": self.config.model,
+            "supports_vision": True,
+            "test_response": response.choices[0].message.content
+        }
+    
+    def _build_visual_analysis_prompt(self,
+                                    document_context: Optional[Dict[str, Any]],
+                                    element_type: Optional[VisualElementType],
+                                    analysis_focus: str) -> str:
+        """Build the analysis prompt based on focus"""
+        prompts = {
+            "comprehensive": """Analyze this image comprehensively. Return a JSON object with:
+{
+    "description": "Detailed description of what you see",
+    "confidence": 0.0-1.0,
+    "extracted_data": {
+        "type": "chart/diagram/photo/table/other",
+        "key_elements": ["list of key elements"],
+        "relationships": ["list of relationships if any"]
+    },
+    "ocr_text": "Any text found in the image"
+}""",
+            
+            "ocr": """Extract all text from this image. Return a JSON object with:
+{
+    "description": "Brief description",
+    "confidence": 0.0-1.0,
+    "ocr_text": "All extracted text"
+}""",
+            
+            "chart_data": """Extract data from this chart/graph. Return a JSON object with:
+{
+    "description": "Chart type and what it shows",
+    "confidence": 0.0-1.0,
+    "extracted_data": {
+        "chart_type": "bar/line/pie/etc",
+        "title": "chart title",
+        "axes": {"x": "label", "y": "label"},
+        "data_points": [{"label": "...", "value": ...}]
+    }
+}""",
+            
+            "description": """Describe this image for document understanding. Return a JSON object with:
+{
+    "description": "Clear, informative description",
+    "confidence": 0.0-1.0,
+    "extracted_data": {
+        "main_subject": "what the image primarily shows",
+        "context": "how it relates to the document"
+    }
+}"""
+        }
+        
+        base_prompt = prompts.get(analysis_focus, prompts["comprehensive"])
+        
+        if document_context:
+            base_prompt = f"Document context: {json.dumps(document_context)}\n\n{base_prompt}"
+        
+        if element_type:
+            base_prompt = f"Expected element type: {element_type}\n\n{base_prompt}"
+        
+        return base_prompt
+    
+    def _detect_element_type(self, result_json: Dict[str, Any]) -> Optional[VisualElementType]:
+        """Detect the visual element type from the result"""
+        extracted_data = result_json.get("extracted_data", {})
+        detected_type = extracted_data.get("type", "").lower()
+        
+        type_mapping = {
+            "chart": VisualElementType.CHART,
+            "graph": VisualElementType.CHART,
+            "diagram": VisualElementType.DIAGRAM,
+            "table": VisualElementType.TABLE,
+            "photo": VisualElementType.IMAGE,
+            "image": VisualElementType.IMAGE,
+            "figure": VisualElementType.FIGURE,
+            "formula": VisualElementType.FORMULA,
+            "equation": VisualElementType.FORMULA
+        }
+        
+        return type_mapping.get(detected_type)
+    
+    # Convenience methods for backward compatibility
+    async def analyze_visual(self,
+                           image_data: bytes,
+                           document_context: Optional[Dict[str, Any]] = None,
+                           element_type: Optional[VisualElementType] = None,
+                           analysis_focus: str = "comprehensive") -> VisualAnalysisResult:
         """
-        Analyze multiple visual elements in batch
+        Analyze a visual element (backward compatibility)
         
         Args:
-            visual_data_list: List of image bytes to analyze
+            image_data: Raw image bytes
             document_context: Context about the document
-            element_types: Optional hints about element types
-            analysis_focus: Type of analysis to perform
+            element_type: Hint about the type of visual element
+            analysis_focus: Type of analysis
             
         Returns:
-            List of VisualAnalysisResult objects
+            VisualAnalysisResult
         """
-        logger.info(f"Starting batch visual analysis for {len(visual_data_list)} elements")
-        
-        # Process in batches to manage API rate limits
-        batch_size = self.config.batch_size
-        results = []
-        
-        for i in range(0, len(visual_data_list), batch_size):
-            batch_data = visual_data_list[i:i + batch_size]
-            batch_types = element_types[i:i + batch_size] if element_types else [None] * len(batch_data)
-            
-            # Process batch concurrently
-            batch_tasks = [
-                self.analyze_visual(
-                    data, 
-                    document_context, 
-                    element_type, 
-                    analysis_focus
-                )
-                for data, element_type in zip(batch_data, batch_types)
-            ]
-            
-            try:
-                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-                
-                for result in batch_results:
-                    if isinstance(result, Exception):
-                        logger.error(f"Batch visual analysis failed: {result}")
-                        # Create failed result
-                        results.append(VisualAnalysisResult(
-                            description=f"Analysis failed: {str(result)}",
-                            confidence=0.0,
-                            success=False,
-                            error_message=str(result)
-                        ))
-                    else:
-                        results.append(result)
-                
-                # Small delay between batches to avoid rate limiting
-                if i + batch_size < len(visual_data_list):
-                    await asyncio.sleep(self.config.retry_delay_seconds)
-                        
-            except Exception as e:
-                logger.error(f"Batch processing failed: {e}")
-                # Add failed results for the entire batch
-                for _ in batch_data:
-                    results.append(VisualAnalysisResult(
-                        description=f"Batch processing failed: {str(e)}",
-                        confidence=0.0,
-                        success=False,
-                        error_message=f"Batch processing failed: {str(e)}"
-                    ))
-        
-        successful_results = sum(1 for r in results if r.success)
-        
-        logger.info(f"Batch visual analysis completed: {successful_results}/{len(results)} successful")
-        
-        return results
+        request = VisualAnalysisRequest(
+            image_data=image_data,
+            document_context=document_context,
+            element_type=element_type,
+            analysis_focus=analysis_focus
+        )
+        return await self.process(request)
     
-    async def health_check(self) -> Dict[str, Any]:
+    async def batch_analyze(self,
+                          images: List[bytes],
+                          analysis_focus: str = "comprehensive") -> List[VisualAnalysisResult]:
         """
-        Check if the Qwen2.5-VL service is healthy
+        Analyze multiple images in batch
         
+        Args:
+            images: List of image data
+            analysis_focus: Type of analysis for all images
+            
         Returns:
-            Health status information
+            List of analysis results
         """
-        try:
-            start_time = datetime.now()
-            
-            # Create a simple test image (1x1 pixel)
-            test_image = Image.new('RGB', (1, 1), color='white')
-            test_image_bytes = BytesIO()
-            test_image.save(test_image_bytes, format='JPEG')
-            test_image_data = test_image_bytes.getvalue()
-            
-            # Test with a simple visual analysis request
-            test_base64 = base64.b64encode(test_image_data).decode('utf-8')
-            
-            response = await self.client.chat.completions.create(
-                model=self.config.model,
-                messages=[
-                    {
-                        "role": "user", 
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Describe this test image briefly. Respond with: {'description': 'test response', 'confidence': 1.0}"
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{test_base64}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=50,
-                temperature=0
-            )
-            
-            response_time = (datetime.now() - start_time).total_seconds() * 1000
-            
-            # Check if we got a valid response
-            if response.choices and response.choices[0].message.content:
-                return {
-                    "status": "healthy",
-                    "endpoint": self.endpoint,
-                    "model": self.config.model,
-                    "response_time_ms": response_time,
-                    "test_response": response.choices[0].message.content.strip(),
-                    "capabilities": ["image_analysis", "chart_analysis", "ocr", "visual_description"],
-                    "last_check": datetime.now().isoformat()
-                }
-            else:
-                return {
-                    "status": "unhealthy",
-                    "endpoint": self.endpoint,
-                    "error": "Empty response from model",
-                    "last_check": datetime.now().isoformat()
-                }
-                
-        except Exception as e:
-            logger.error(f"Qwen2.5-VL health check failed: {e}")
-            return {
-                "status": "unhealthy",
-                "endpoint": self.endpoint,
-                "error": str(e),
-                "last_check": datetime.now().isoformat()
-            }
+        requests = [
+            VisualAnalysisRequest(image_data=img, analysis_focus=analysis_focus)
+            for img in images
+        ]
+        
+        return await self.process_batch(
+            requests,
+            batch_size=self.config.batch_size,
+            concurrent_batches=2
+        )
+
+
+# Example usage
+async def example_usage():
+    """Show benefits of new architecture"""
+    
+    async with Qwen25VLClient() as client:
+        # 1. Health check
+        health = await client.health_check()
+        print(f"Service Status: {health.status}")
+        
+        # 2. Analyze single image with auto-retry
+        with open("chart.png", "rb") as f:
+            image_data = f.read()
+        
+        result = await client.analyze_visual(
+            image_data,
+            analysis_focus="chart_data"
+        )
+        print(f"Analysis confidence: {result.confidence}")
+        
+        # 3. Batch process multiple images
+        image_files = ["img1.png", "img2.png", "img3.png"]
+        images = []
+        for img_file in image_files:
+            with open(img_file, "rb") as f:
+                images.append(f.read())
+        
+        results = await client.batch_analyze(images)
+        print(f"Analyzed {len(results)} images")
+        
+        # 4. Get metrics
+        metrics = client.get_metrics()
+        print(f"Average response time: {metrics.average_response_time_ms}ms")

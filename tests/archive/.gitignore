@@ -1,0 +1,6 @@
+# Archive Notice
+# These tests were created during vLLM debugging and are kept for reference.
+# They are not part of the active test suite and may not work with current code.
+
+# To exclude archive from git (optional):
+# Add "tests/archive/" to root .gitignore if you don't want to track these files

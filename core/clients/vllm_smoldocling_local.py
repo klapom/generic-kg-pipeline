@@ -19,7 +19,7 @@ from pdf2image import convert_from_path
 
 from core.vllm.base_client import BaseVLLMClient, InferenceRequest, InferenceResult
 from core.vllm.model_manager import ModelConfig, SamplingConfig
-from plugins.parsers.base_parser import Document, Segment, DocumentMetadata, DocumentType, ParseError, VisualElement
+from core.parsers.interfaces import Document, Segment, DocumentMetadata, DocumentType, ParseError, VisualElement, VisualElementType
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +259,9 @@ class VLLMSmolDoclingClient(BaseVLLMClient):
     def parse_model_output(self, output: Any) -> Dict[str, Any]:
         """Parse SmolDocling DocTags output format"""
         try:
+            # Initialize duplicate tracking
+            duplicate_count = 0
+            
             # Extract text from vLLM output
             if hasattr(output, 'outputs') and output.outputs:
                 content = output.outputs[0].text
@@ -305,15 +308,47 @@ class VLLMSmolDoclingClient(BaseVLLMClient):
                     "format": "otsl"
                 })
             
-            # Extract pictures with captions
+            # Extract pictures with captions - deduplicate by location
             pictures = []
             picture_matches = re.findall(r"<picture>(.+?)</picture>", content, flags=re.DOTALL)
+            
+            # Track seen picture locations to avoid duplicates
+            seen_locations = set()
+            
             for pic in picture_matches:
-                caption_match = re.search(r"<caption>(.+?)</caption>", pic)
-                pictures.append({
-                    "content": pic.strip(),
-                    "caption": caption_match.group(1).strip() if caption_match else ""
-                })
+                # Extract location coordinates if present
+                loc_match = re.search(r'<loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>', pic)
+                
+                if loc_match:
+                    # Create a tuple of coordinates for deduplication
+                    coords = tuple(map(int, loc_match.groups()))
+                    
+                    # Skip if we've already seen this exact location
+                    if coords in seen_locations:
+                        duplicate_count += 1
+                        continue
+                    
+                    seen_locations.add(coords)
+                    
+                    # Extract caption if present
+                    caption_match = re.search(r"<caption>(.+?)</caption>", pic)
+                    
+                    pictures.append({
+                        "content": pic.strip(),
+                        "caption": caption_match.group(1).strip() if caption_match else "",
+                        "bbox": list(coords)  # Store coordinates as bbox
+                    })
+                else:
+                    # No location info - include it anyway (might be a different format)
+                    caption_match = re.search(r"<caption>(.+?)</caption>", pic)
+                    pictures.append({
+                        "content": pic.strip(),
+                        "caption": caption_match.group(1).strip() if caption_match else ""
+                    })
+            
+            # Log deduplication results if any duplicates were found
+            if duplicate_count > 0:
+                logger.debug(f"Deduplicated {duplicate_count} duplicate picture tags (kept {len(pictures)} unique pictures)")
             
             # Extract formulas
             formulas = []
@@ -369,9 +404,18 @@ class VLLMSmolDoclingClient(BaseVLLMClient):
                     all_text = [clean_content]
             
             # Log extracted elements for debugging
+            dedup_info = f" (deduplicated {duplicate_count} duplicates)" if duplicate_count > 0 else ""
             logger.debug(f"Extracted {len(text_blocks)} text blocks, {len(titles)} titles, "
-                        f"{len(tables)} tables, {len(pictures)} pictures, {len(formulas)} formulas, "
+                        f"{len(tables)} tables, {len(pictures)} pictures{dedup_info}, {len(formulas)} formulas, "
                         f"{len(code_blocks)} code blocks")
+            
+            # Log bounding box information for pictures
+            pics_with_bbox = sum(1 for pic in pictures if pic.get("bbox"))
+            if pics_with_bbox > 0:
+                logger.debug(f"Found {pics_with_bbox}/{len(pictures)} pictures with bounding boxes")
+                for i, pic in enumerate(pictures):
+                    if pic.get("bbox"):
+                        logger.debug(f"  Picture {i+1}: bbox={pic['bbox']} (0-500 scale)")
             
             # Return structured data
             parsed_data = {
@@ -702,7 +746,10 @@ class VLLMSmolDoclingClient(BaseVLLMClient):
                     segment_index += 1
             
             # Add image descriptions and visual elements
-            for image in page.images:
+            for i, image in enumerate(page.images):
+                # Debug logging
+                logger.debug(f"Processing image {i+1} on page {page.page_number}: bbox={image.get('bbox')}, caption={image.get('caption', 'N/A')}")
+                
                 if image.get("description"):
                     image_text = f"[Image: {image.get('caption', 'Untitled')}] {image['description']}"
                     full_text_parts.append(image_text)
@@ -720,14 +767,33 @@ class VLLMSmolDoclingClient(BaseVLLMClient):
                     segment_index += 1
                 
                 # Add to visual elements
+                bbox_data = image.get("bbox")
+                bounding_box = None
+                if bbox_data and isinstance(bbox_data, list) and len(bbox_data) == 4:
+                    try:
+                        bounding_box = {
+                            "x": bbox_data[0], 
+                            "y": bbox_data[1], 
+                            "width": bbox_data[2] - bbox_data[0], 
+                            "height": bbox_data[3] - bbox_data[1]
+                        }
+                        logger.debug(f"Created bounding box: {bounding_box}")
+                    except Exception as e:
+                        logger.error(f"Failed to create bounding box from {bbox_data}: {e}")
+                else:
+                    logger.debug(f"No valid bbox data for image {i+1}: {bbox_data}")
+                
                 visual_elements.append(VisualElement(
-                    element_type=image.get("image_type", "figure"),
-                    content=image.get("description", ""),
-                    page_number=page.page_number,
-                    bbox=image.get("bbox"),
-                    metadata={
+                    element_type=VisualElementType.FIGURE if image.get("image_type", "figure") == "figure" else VisualElementType.IMAGE,
+                    source_format=DocumentType.PDF,
+                    content_hash=VisualElement.create_hash(f"{page.page_number}_{image.get('bbox', [])}_{image.get('caption', '')}".encode()),
+                    vlm_description=image.get("description", ""),
+                    bounding_box=bounding_box,
+                    page_or_slide=page.page_number,
+                    analysis_metadata={
                         "caption": image.get("caption"),
-                        "extracted_by": "SmolDocling"
+                        "extracted_by": "SmolDocling",
+                        "raw_bbox": bbox_data  # Store raw coordinates too
                     }
                 ))
             
@@ -788,6 +854,34 @@ class VLLMSmolDoclingClient(BaseVLLMClient):
         
         # Fallback for other formats
         return table.get("content", "")
+    
+    def convert_bbox_scale(self, bbox: List[int], target_width: int, target_height: int) -> Dict[str, float]:
+        """
+        Convert bbox coordinates from SmolDocling's 0-500 scale to actual pixel coordinates
+        
+        Args:
+            bbox: List of 4 integers [x1, y1, x2, y2] in 0-500 scale
+            target_width: Target image width in pixels
+            target_height: Target image height in pixels
+            
+        Returns:
+            Dictionary with x, y, width, height in target scale
+        """
+        if not bbox or len(bbox) != 4:
+            return None
+            
+        # SmolDocling uses 0-500 scale
+        scale_x = target_width / 500.0
+        scale_y = target_height / 500.0
+        
+        x1, y1, x2, y2 = bbox
+        
+        return {
+            "x": x1 * scale_x,
+            "y": y1 * scale_y,
+            "width": (x2 - x1) * scale_x,
+            "height": (y2 - y1) * scale_y
+        }
     
     def batch_parse_pdfs(self, pdf_paths: List[Path]) -> List[SmolDoclingResult]:
         """

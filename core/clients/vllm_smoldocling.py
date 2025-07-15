@@ -1,23 +1,26 @@
-"""vLLM SmolDocling client for advanced PDF parsing (GPU Workload 1)"""
+"""
+vLLM SmolDocling client for advanced PDF parsing (GPU Workload 1)
+Modernized with standardized BaseModelClient architecture
+"""
 
-import asyncio
 import base64
 import json
 import logging
-from dataclasses import dataclass
-from datetime import datetime
+from typing import Any, Dict, List, Optional
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
 
 import httpx
+
+from datetime import datetime
 from pydantic import BaseModel
 
-from core.config import get_config
-from plugins.parsers.base_parser import Document, Segment, DocumentMetadata, DocumentType, ParseError
+from core.clients.base import BaseModelClient, BatchProcessingMixin
+from plugins.parsers.base_parser import Document, Segment, DocumentMetadata, DocumentType
 
 logger = logging.getLogger(__name__)
 
 
+# Data Models
 class SmolDoclingConfig(BaseModel):
     """Configuration for SmolDocling processing"""
     max_pages: int = 100
@@ -25,59 +28,54 @@ class SmolDoclingConfig(BaseModel):
     extract_images: bool = True
     extract_formulas: bool = True
     preserve_layout: bool = True
-    output_format: str = "structured"  # structured, markdown, text
+    output_format: str = "structured"
     gpu_optimization: bool = True
     batch_size: int = 1
     timeout_seconds: int = 300
 
 
-@dataclass
-class TableData:
+class TableData(BaseModel):
     """Extracted table data structure"""
-    caption: Optional[str]
-    headers: List[str]
-    rows: List[List[str]]
+    caption: Optional[str] = None
+    headers: List[str] = []
+    rows: List[List[str]] = []
     page_number: int
-    bbox: Optional[Dict[str, float]] = None  # Bounding box coordinates
+    bbox: Optional[Dict[str, float]] = None
 
 
-@dataclass
-class ImageData:
+class ImageData(BaseModel):
     """Extracted image data structure"""
-    caption: Optional[str]
-    description: Optional[str]
+    caption: Optional[str] = None
+    description: Optional[str] = None
     page_number: int
     bbox: Optional[Dict[str, float]] = None
-    image_type: str = "figure"  # figure, diagram, chart, photo
+    image_type: str = "figure"
 
 
-@dataclass
-class FormulaData:
+class FormulaData(BaseModel):
     """Extracted formula data structure"""
-    latex: Optional[str]
-    mathml: Optional[str]
-    description: Optional[str]
+    latex: Optional[str] = None
+    mathml: Optional[str] = None
+    description: Optional[str] = None
     page_number: int
     bbox: Optional[Dict[str, float]] = None
 
 
-@dataclass
-class SmolDoclingPage:
+class SmolDoclingPage(BaseModel):
     """Parsed page data from SmolDocling"""
     page_number: int
     text: str
-    tables: List[TableData]
-    images: List[ImageData]
-    formulas: List[FormulaData]
-    layout_info: Dict[str, Any]
+    tables: List[TableData] = []
+    images: List[ImageData] = []
+    formulas: List[FormulaData] = []
+    layout_info: Dict[str, Any] = {}
     confidence_score: float = 0.0
 
 
-@dataclass
-class SmolDoclingResult:
+class SmolDoclingResult(BaseModel):
     """Complete SmolDocling parsing result"""
     pages: List[SmolDoclingPage]
-    metadata: Dict[str, Any]
+    metadata: Dict[str, Any] = {}
     processing_time_seconds: float
     model_version: str
     total_pages: int
@@ -85,9 +83,16 @@ class SmolDoclingResult:
     error_message: Optional[str] = None
 
 
-class VLLMSmolDoclingClient:
+class SmolDoclingRequest(BaseModel):
+    """Request-Format für SmolDocling"""
+    pdf_path: Path
+    config: Optional[SmolDoclingConfig] = None
+
+
+class VLLMSmolDoclingClient(BaseModelClient[SmolDoclingRequest, SmolDoclingResult, SmolDoclingConfig], 
+                            BatchProcessingMixin):
     """
-    Client for vLLM SmolDocling service (GPU Workload 1)
+    Modernisierter vLLM SmolDocling Client
     
     Handles advanced PDF parsing including:
     - Complex document layouts
@@ -95,547 +100,268 @@ class VLLMSmolDoclingClient:
     - Image analysis and caption generation
     - Mathematical formula recognition
     - Multi-column text processing
+    
+    Now with:
+    - Automatic retry logic
+    - Standardized health checks
+    - Built-in metrics
+    - Batch processing support
+    - Unified error handling
     """
     
     def __init__(self, config: Optional[SmolDoclingConfig] = None):
-        """Initialize the vLLM SmolDocling client"""
-        self.config = config or SmolDoclingConfig()
+        """Initialize with backward compatibility"""
+        # For backward compatibility - if config passed directly
+        if config and not isinstance(config, str):
+            super().__init__("vllm", config=config)
+        else:
+            super().__init__("vllm")
+    
+    def _get_default_config(self) -> SmolDoclingConfig:
+        """Standard-Konfiguration für SmolDocling"""
+        return SmolDoclingConfig()
+    
+    async def _process_internal(self, request: SmolDoclingRequest) -> SmolDoclingResult:
+        """
+        Interne PDF-Verarbeitung mit SmolDocling
         
-        # Get endpoint from system config
-        system_config = get_config()
-        self.endpoint = system_config.parsing.pdf.vllm_endpoint
+        Args:
+            request: PDF-Pfad und optionale Config
+            
+        Returns:
+            SmolDocling Parsing-Ergebnis
+        """
+        # Verwende request-spezifische Config oder Default
+        config = request.config or self.config
         
-        # HTTP client with appropriate timeouts for GPU processing
-        self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.config.timeout_seconds),
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
+        # Lese PDF-Datei
+        pdf_path = request.pdf_path
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF not found: {pdf_path}")
+        
+        # Bereite Request für vLLM vor
+        with open(pdf_path, "rb") as f:
+            pdf_content = f.read()
+        
+        vllm_request = {
+            "pdf_base64": base64.b64encode(pdf_content).decode('utf-8'),
+            "config": {
+                "max_pages": config.max_pages,
+                "extract_tables": config.extract_tables,
+                "extract_images": config.extract_images,
+                "extract_formulas": config.extract_formulas,
+                "preserve_layout": config.preserve_layout,
+                "output_format": config.output_format,
+                "gpu_optimization": config.gpu_optimization,
+                "batch_size": config.batch_size
+            }
+        }
+        
+        # Sende Request an vLLM
+        response = await self.client.post(
+            f"{self.endpoint}/v1/parse",
+            json=vllm_request
+        )
+        response.raise_for_status()
+        
+        # Parse Response
+        result_data = response.json()
+        
+        # Konvertiere zu SmolDoclingResult
+        pages = []
+        for page_data in result_data.get("pages", []):
+            page = SmolDoclingPage(
+                page_number=page_data["page_number"],
+                text=page_data["text"],
+                tables=[TableData(**t) for t in page_data.get("tables", [])],
+                images=[ImageData(**i) for i in page_data.get("images", [])],
+                formulas=[FormulaData(**f) for f in page_data.get("formulas", [])],
+                layout_info=page_data.get("layout_info", {}),
+                confidence_score=page_data.get("confidence_score", 0.0)
+            )
+            pages.append(page)
+        
+        return SmolDoclingResult(
+            pages=pages,
+            metadata=result_data.get("metadata", {}),
+            processing_time_seconds=result_data.get("processing_time", 0.0),
+            model_version=result_data.get("model_version", "unknown"),
+            total_pages=len(pages),
+            success=True
+        )
+    
+    async def _health_check_internal(self) -> Dict[str, Any]:
+        """SmolDocling-spezifischer Health Check"""
+        response = await self.client.get(f"{self.endpoint}/health")
+        response.raise_for_status()
+        
+        health_data = response.json()
+        
+        # Extrahiere relevante Informationen
+        return {
+            "model_loaded": health_data.get("model_loaded", False),
+            "model_name": health_data.get("model_name", "SmolDocling"),
+            "gpu_memory_used": health_data.get("gpu_memory_used", 0),
+            "gpu_memory_total": health_data.get("gpu_memory_total", 0),
+            "queue_size": health_data.get("queue_size", 0),
+            "version": health_data.get("version", "unknown")
+        }
+    
+    async def parse_pdf(self, pdf_path: Path, config: Optional[SmolDoclingConfig] = None) -> Document:
+        """
+        Convenience-Methode für direktes PDF-Parsing
+        
+        Args:
+            pdf_path: Pfad zur PDF-Datei
+            config: Optionale Config-Überschreibung
+            
+        Returns:
+            Geparster Document
+        """
+        # Erstelle Request
+        request = SmolDoclingRequest(pdf_path=pdf_path, config=config)
+        
+        # Verarbeite mit BaseModelClient (inkl. Retry-Logik!)
+        result = await self.process(request)
+        
+        # Konvertiere zu Document
+        return self._convert_to_document(pdf_path, result)
+    
+    async def parse_multiple_pdfs(self, pdf_paths: List[Path]) -> List[Document]:
+        """
+        Parse mehrere PDFs parallel mit Batch-Processing
+        
+        Args:
+            pdf_paths: Liste von PDF-Pfaden
+            
+        Returns:
+            Liste von Documents
+        """
+        # Erstelle Requests
+        requests = [SmolDoclingRequest(pdf_path=path) for path in pdf_paths]
+        
+        # Nutze BatchProcessingMixin
+        results = await self.process_batch(
+            requests, 
+            batch_size=5,  # 5 PDFs pro Batch
+            concurrent_batches=2  # 2 parallele Batches
         )
         
-        logger.info(f"Initialized vLLM SmolDocling client: {self.endpoint}")
+        # Konvertiere Ergebnisse
+        documents = []
+        for path, result in zip(pdf_paths, results):
+            if result:  # Skip failed results
+                documents.append(self._convert_to_document(path, result))
+        
+        return documents
     
-    async def __aenter__(self):
-        """Async context manager entry"""
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
-        await self.client.aclose()
-    
-    async def health_check(self) -> Dict[str, Any]:
-        """
-        Check if the vLLM SmolDocling service is healthy
-        
-        Returns:
-            Health status information
-        """
-        try:
-            response = await self.client.get(f"{self.endpoint}/health")
-            response.raise_for_status()
-            
-            health_data = response.json()
-            
-            return {
-                "status": "healthy",
-                "endpoint": self.endpoint,
-                "response_time_ms": response.elapsed.total_seconds() * 1000,
-                "model_info": health_data.get("model_info", {}),
-                "gpu_info": health_data.get("gpu_info", {}),
-                "last_check": datetime.now().isoformat()
-            }
-            
-        except httpx.TimeoutException:
-            logger.error("vLLM SmolDocling health check timed out")
-            return {
-                "status": "timeout",
-                "endpoint": self.endpoint,
-                "error": "Health check timed out",
-                "last_check": datetime.now().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"vLLM SmolDocling health check failed: {e}")
-            return {
-                "status": "unhealthy",
-                "endpoint": self.endpoint,
-                "error": str(e),
-                "last_check": datetime.now().isoformat()
-            }
-    
-    async def parse_pdf(
-        self,
-        pdf_path: Path,
-        config: Optional[SmolDoclingConfig] = None
-    ) -> SmolDoclingResult:
-        """
-        Parse a PDF document using vLLM SmolDocling
-        
-        Args:
-            pdf_path: Path to the PDF file
-            config: Optional configuration override
-            
-        Returns:
-            SmolDocling parsing result
-            
-        Raises:
-            ParseError: If parsing fails
-        """
-        start_time = datetime.now()
-        config = config or self.config
-        
-        if not pdf_path.exists():
-            raise ParseError(f"PDF file not found: {pdf_path}")
-        
-        if not pdf_path.suffix.lower() == '.pdf':
-            raise ParseError(f"Expected PDF file, got: {pdf_path.suffix}")
-        
-        try:
-            # Read and encode PDF file
-            with open(pdf_path, 'rb') as f:
-                pdf_content = f.read()
-            
-            pdf_base64 = base64.b64encode(pdf_content).decode('utf-8')
-            
-            # Prepare request payload
-            payload = {
-                "model": "smoldocling",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": self._build_parsing_prompt(config)
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:application/pdf;base64,{pdf_base64}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "max_tokens": 8000,
-                "temperature": 0.1,
-                "stream": False,
-                "extra_body": {
-                    "max_pages": config.max_pages,
-                    "extract_tables": config.extract_tables,
-                    "extract_images": config.extract_images,
-                    "extract_formulas": config.extract_formulas,
-                    "preserve_layout": config.preserve_layout,
-                    "output_format": config.output_format,
-                    "gpu_optimization": config.gpu_optimization
-                }
-            }
-            
-            logger.info(f"Sending PDF to vLLM SmolDocling: {pdf_path.name} ({len(pdf_content)} bytes)")
-            
-            # Send request to vLLM
-            response = await self.client.post(
-                f"{self.endpoint}/v1/chat/completions",
-                json=payload,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            response.raise_for_status()
-            result_data = response.json()
-            
-            # Parse the response
-            parsing_result = self._parse_vllm_response(result_data, start_time)
-            
-            logger.info(f"PDF parsing completed: {pdf_path.name} "
-                       f"({parsing_result.total_pages} pages, "
-                       f"{parsing_result.processing_time_seconds:.2f}s)")
-            
-            return parsing_result
-            
-        except httpx.TimeoutException:
-            error_msg = f"PDF parsing timed out after {config.timeout_seconds}s: {pdf_path.name}"
-            logger.error(error_msg)
-            raise ParseError(error_msg)
-            
-        except httpx.HTTPStatusError as e:
-            error_msg = f"vLLM SmolDocling HTTP error {e.response.status_code}: {e.response.text}"
-            logger.error(error_msg)
-            raise ParseError(error_msg)
-            
-        except Exception as e:
-            error_msg = f"PDF parsing failed: {pdf_path.name} - {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            raise ParseError(error_msg)
-    
-    def _build_parsing_prompt(self, config: SmolDoclingConfig) -> str:
-        """Build the parsing prompt for SmolDocling"""
-        prompt_parts = [
-            "Please parse this PDF document and extract structured information.",
-            "Provide the results in JSON format with the following structure:",
-            "",
-            "```json",
-            "{",
-            "  \"pages\": [",
-            "    {",
-            "      \"page_number\": 1,",
-            "      \"text\": \"extracted text content\",",
-            "      \"tables\": [",
-            "        {",
-            "          \"caption\": \"table caption\",",
-            "          \"headers\": [\"col1\", \"col2\"],",
-            "          \"rows\": [[\"data1\", \"data2\"]],",
-            "          \"page_number\": 1",
-            "        }",
-            "      ],",
-            "      \"images\": [",
-            "        {",
-            "          \"caption\": \"image caption\",",
-            "          \"description\": \"detailed description\",",
-            "          \"page_number\": 1,",
-            "          \"image_type\": \"figure\"",
-            "        }",
-            "      ],",
-            "      \"formulas\": [",
-            "        {",
-            "          \"latex\": \"LaTeX representation\",",
-            "          \"description\": \"formula description\",",
-            "          \"page_number\": 1",
-            "        }",
-            "      ]",
-            "    }",
-            "  ],",
-            "  \"metadata\": {",
-            "    \"title\": \"document title\",",
-            "    \"author\": \"document author\",",
-            "    \"total_pages\": 10",
-            "  }",
-            "}",
-            "```",
-            ""
-        ]
-        
-        if config.extract_tables:
-            prompt_parts.append("- Extract all tables with their structure preserved")
-        
-        if config.extract_images:
-            prompt_parts.append("- Analyze images and provide detailed descriptions")
-        
-        if config.extract_formulas:
-            prompt_parts.append("- Extract mathematical formulas in LaTeX format")
-        
-        if config.preserve_layout:
-            prompt_parts.append("- Preserve document layout and formatting information")
-        
-        prompt_parts.extend([
-            "",
-            f"Process up to {config.max_pages} pages.",
-            "Focus on accuracy and completeness of extraction."
-        ])
-        
-        return "\n".join(prompt_parts)
-    
-    def _parse_vllm_response(
-        self,
-        response_data: Dict[str, Any],
-        start_time: datetime
-    ) -> SmolDoclingResult:
-        """Parse the response from vLLM SmolDocling"""
-        processing_time = (datetime.now() - start_time).total_seconds()
-        
-        try:
-            # Extract the content from vLLM response
-            choices = response_data.get("choices", [])
-            if not choices:
-                raise ValueError("No choices in vLLM response")
-            
-            content = choices[0].get("message", {}).get("content", "")
-            
-            # Parse JSON content
-            if "```json" in content:
-                # Extract JSON from markdown code block
-                json_start = content.find("```json") + 7
-                json_end = content.find("```", json_start)
-                json_content = content[json_start:json_end].strip()
-            else:
-                json_content = content
-            
-            parsed_data = json.loads(json_content)
-            
-            # Convert to SmolDocling data structures
-            pages = []
-            for page_data in parsed_data.get("pages", []):
-                # Parse tables
-                tables = []
-                for table_data in page_data.get("tables", []):
-                    tables.append(TableData(
-                        caption=table_data.get("caption"),
-                        headers=table_data.get("headers", []),
-                        rows=table_data.get("rows", []),
-                        page_number=table_data.get("page_number", page_data["page_number"]),
-                        bbox=table_data.get("bbox")
-                    ))
-                
-                # Parse images
-                images = []
-                for image_data in page_data.get("images", []):
-                    images.append(ImageData(
-                        caption=image_data.get("caption"),
-                        description=image_data.get("description"),
-                        page_number=image_data.get("page_number", page_data["page_number"]),
-                        bbox=image_data.get("bbox"),
-                        image_type=image_data.get("image_type", "figure")
-                    ))
-                
-                # Parse formulas
-                formulas = []
-                for formula_data in page_data.get("formulas", []):
-                    formulas.append(FormulaData(
-                        latex=formula_data.get("latex"),
-                        mathml=formula_data.get("mathml"),
-                        description=formula_data.get("description"),
-                        page_number=formula_data.get("page_number", page_data["page_number"]),
-                        bbox=formula_data.get("bbox")
-                    ))
-                
-                pages.append(SmolDoclingPage(
-                    page_number=page_data["page_number"],
-                    text=page_data.get("text", ""),
-                    tables=tables,
-                    images=images,
-                    formulas=formulas,
-                    layout_info=page_data.get("layout_info", {}),
-                    confidence_score=page_data.get("confidence_score", 0.0)
-                ))
-            
-            metadata = parsed_data.get("metadata", {})
-            total_pages = metadata.get("total_pages", len(pages))
-            
-            # Get model version from response
-            model_version = response_data.get("model", "smoldocling-unknown")
-            
-            return SmolDoclingResult(
-                pages=pages,
-                metadata=metadata,
-                processing_time_seconds=processing_time,
-                model_version=model_version,
-                total_pages=total_pages,
-                success=True
-            )
-            
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.error(f"Failed to parse vLLM SmolDocling response: {e}")
-            return SmolDoclingResult(
-                pages=[],
-                metadata={},
-                processing_time_seconds=processing_time,
-                model_version="unknown",
-                total_pages=0,
-                success=False,
-                error_message=f"Response parsing failed: {str(e)}"
-            )
-    
-    def convert_to_document(
-        self,
-        result: SmolDoclingResult,
-        pdf_path: Path
-    ) -> Document:
-        """
-        Convert SmolDocling result to standard Document format
-        
-        Args:
-            result: SmolDocling parsing result
-            pdf_path: Original PDF file path
-            
-        Returns:
-            Document object compatible with the pipeline
-        """
-        if not result.success:
-            raise ParseError(f"Cannot convert failed parsing result: {result.error_message}")
-        
-        # Combine all text content
-        full_text_parts = []
+    def _convert_to_document(self, pdf_path: Path, result: SmolDoclingResult) -> Document:
+        """Konvertiere SmolDoclingResult zu Document"""
         segments = []
-        segment_index = 0
         
         for page in result.pages:
-            # Add main text content
-            if page.text:
-                full_text_parts.append(page.text)
+            # Text-Segmente
+            if page.text.strip():
                 segments.append(Segment(
                     content=page.text,
-                    page_number=page.page_number,
-                    segment_index=segment_index,
                     segment_type="text",
-                    metadata={"confidence_score": page.confidence_score}
+                    metadata={
+                        "page": page.page_number,
+                        "confidence": page.confidence_score
+                    }
                 ))
-                segment_index += 1
             
-            # Add table content
+            # Tabellen-Segmente
             for table in page.tables:
-                table_text = self._table_to_text(table)
-                if table_text:
-                    full_text_parts.append(table_text)
-                    segments.append(Segment(
-                        content=table_text,
-                        page_number=table.page_number,
-                        segment_index=segment_index,
-                        segment_type="table",
-                        metadata={
-                            "caption": table.caption,
-                            "headers": table.headers,
-                            "row_count": len(table.rows),
-                            "column_count": len(table.headers),
-                            "bbox": table.bbox
-                        }
-                    ))
-                    segment_index += 1
+                segments.append(Segment(
+                    content=self._format_table(table),
+                    segment_type="table",
+                    metadata={
+                        "page": page.page_number,
+                        "caption": table.caption,
+                        "headers": table.headers,
+                        "rows": table.rows
+                    }
+                ))
             
-            # Add image descriptions
+            # Bild-Beschreibungen
             for image in page.images:
                 if image.description:
-                    image_text = f"[Image: {image.caption or 'Untitled'}] {image.description}"
-                    full_text_parts.append(image_text)
                     segments.append(Segment(
-                        content=image_text,
-                        page_number=image.page_number,
-                        segment_index=segment_index,
-                        segment_type="image_caption",
+                        content=image.description,
+                        segment_type="image_description",
                         metadata={
+                            "page": page.page_number,
                             "caption": image.caption,
-                            "image_type": image.image_type,
-                            "bbox": image.bbox
+                            "image_type": image.image_type
                         }
                     ))
-                    segment_index += 1
-            
-            # Add formula descriptions
-            for formula in page.formulas:
-                if formula.description or formula.latex:
-                    formula_text = f"[Formula] {formula.description or formula.latex}"
-                    full_text_parts.append(formula_text)
-                    segments.append(Segment(
-                        content=formula_text,
-                        page_number=formula.page_number,
-                        segment_index=segment_index,
-                        segment_type="formula",
-                        metadata={
-                            "latex": formula.latex,
-                            "mathml": formula.mathml,
-                            "bbox": formula.bbox
-                        }
-                    ))
-                    segment_index += 1
         
-        # Create document metadata
-        stat = pdf_path.stat()
+        # Erstelle Document
         metadata = DocumentMetadata(
-            title=result.metadata.get("title", pdf_path.stem),
+            title=pdf_path.stem,
             author=result.metadata.get("author"),
+            created_date=None,  # Could parse from PDF metadata
             page_count=result.total_pages,
-            file_size=stat.st_size,
-            file_path=pdf_path,
-            document_type=DocumentType.PDF,
-            custom_metadata={
-                "vllm_smoldocling": {
-                    "model_version": result.model_version,
-                    "processing_time_seconds": result.processing_time_seconds,
-                    "tables_count": sum(len(p.tables) for p in result.pages),
-                    "images_count": sum(len(p.images) for p in result.pages),
-                    "formulas_count": sum(len(p.formulas) for p in result.pages),
-                    "total_segments": len(segments)
-                }
-            }
+            document_type=DocumentType.PDF
         )
-        
-        full_text = "\n\n".join(full_text_parts)
         
         return Document(
-            content=full_text,
-            segments=segments,
+            document_id=f"smoldocling_{pdf_path.stem}_{hash(pdf_path)}",
+            source_path=str(pdf_path),
+            document_type=DocumentType.PDF,
             metadata=metadata,
-            raw_data=result
+            segments=segments,
+            processing_timestamp=datetime.now().isoformat()
         )
     
-    def _table_to_text(self, table: TableData) -> str:
-        """Convert table data to readable text format"""
-        if not table.rows:
-            return table.caption or ""
-        
-        text_parts = []
-        
+    def _format_table(self, table: TableData) -> str:
+        """Formatiere Tabelle als Text"""
+        lines = []
         if table.caption:
-            text_parts.append(f"Table: {table.caption}")
+            lines.append(f"Table: {table.caption}")
         
-        # Add headers if available
+        # Headers
         if table.headers:
-            text_parts.append(" | ".join(table.headers))
-            text_parts.append("-" * len(" | ".join(table.headers)))
+            lines.append(" | ".join(table.headers))
+            lines.append("-" * (len(" | ".join(table.headers))))
         
-        # Add rows
+        # Rows
         for row in table.rows:
-            text_parts.append(" | ".join(str(cell) for cell in row))
+            lines.append(" | ".join(str(cell) for cell in row))
         
-        return "\n".join(text_parts)
+        return "\n".join(lines)
+
+
+# Beispiel-Nutzung:
+async def example_usage():
+    """Zeigt die Vorteile der neuen Architektur"""
     
-    async def batch_parse_pdfs(
-        self,
-        pdf_paths: List[Path],
-        config: Optional[SmolDoclingConfig] = None
-    ) -> List[SmolDoclingResult]:
-        """
-        Parse multiple PDFs in batch for better GPU utilization
+    # Client mit automatischer Config aus System
+    async with VLLMSmolDoclingClient("vllm") as client:
         
-        Args:
-            pdf_paths: List of PDF file paths
-            config: Optional configuration override
-            
-        Returns:
-            List of SmolDocling parsing results
-        """
-        config = config or self.config
+        # 1. Health Check (standardisiert!)
+        health = await client.health_check()
+        print(f"Service Status: {health.status}")
+        print(f"Response Time: {health.response_time_ms}ms")
         
-        # Process in batches to manage memory usage
-        batch_size = config.batch_size
-        results = []
+        # 2. Warte bis Service bereit
+        ready = await client.wait_until_ready(max_attempts=10)
+        if not ready:
+            print("Service nicht bereit!")
+            return
         
-        for i in range(0, len(pdf_paths), batch_size):
-            batch = pdf_paths[i:i + batch_size]
-            
-            # Process batch concurrently
-            batch_tasks = [
-                self.parse_pdf(pdf_path, config)
-                for pdf_path in batch
-            ]
-            
-            try:
-                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-                
-                for pdf_path, result in zip(batch, batch_results):
-                    if isinstance(result, Exception):
-                        logger.error(f"Batch parsing failed for {pdf_path}: {result}")
-                        # Create failed result
-                        results.append(SmolDoclingResult(
-                            pages=[],
-                            metadata={},
-                            processing_time_seconds=0.0,
-                            model_version="unknown",
-                            total_pages=0,
-                            success=False,
-                            error_message=str(result)
-                        ))
-                    else:
-                        results.append(result)
-                        
-            except Exception as e:
-                logger.error(f"Batch processing failed: {e}")
-                # Add failed results for the entire batch
-                for pdf_path in batch:
-                    results.append(SmolDoclingResult(
-                        pages=[],
-                        metadata={},
-                        processing_time_seconds=0.0,
-                        model_version="unknown",
-                        total_pages=0,
-                        success=False,
-                        error_message=f"Batch processing failed: {str(e)}"
-                    ))
+        # 3. Parse einzelne PDF (mit Auto-Retry!)
+        doc = await client.parse_pdf(Path("test.pdf"))
+        print(f"Parsed {len(doc.segments)} segments")
         
-        logger.info(f"Batch parsing completed: {len(pdf_paths)} PDFs processed")
-        return results
+        # 4. Parse mehrere PDFs parallel
+        pdf_files = Path("data/input").glob("*.pdf")
+        documents = await client.parse_multiple_pdfs(list(pdf_files))
+        print(f"Parsed {len(documents)} documents")
+        
+        # 5. Metriken abrufen
+        metrics = client.get_metrics()
+        print(f"Total Requests: {metrics.total_requests}")
+        print(f"Success Rate: {metrics.successful_requests / metrics.total_requests * 100:.1f}%")
+        print(f"Avg Response Time: {metrics.average_response_time_ms:.2f}ms")

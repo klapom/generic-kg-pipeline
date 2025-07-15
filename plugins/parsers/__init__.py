@@ -11,7 +11,7 @@ from .base_parser import (
     ParseError
 )
 
-from .pdf_parser import PDFParser
+# PDF Parser imports moved to factory to avoid circular dependency
 from .docx_parser import DOCXParser
 from .xlsx_parser import XLSXParser
 from .pptx_parser import PPTXParser
@@ -26,7 +26,6 @@ __all__ = [
     "DocumentType",
     "VisualElementType",
     "ParseError",
-    "PDFParser",
     "DOCXParser", 
     "XLSXParser",
     "PPTXParser",

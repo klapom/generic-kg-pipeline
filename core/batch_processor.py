@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from plugins.parsers import ParserFactory, Document, DocumentType
-from core.config import get_config
+from core.config_new.unified_manager import get_config
 
 logger = logging.getLogger(__name__)
 

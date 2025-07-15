@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from core.config import get_config
+from core.config_new.unified_manager import get_config
 
 logger = logging.getLogger(__name__)
 

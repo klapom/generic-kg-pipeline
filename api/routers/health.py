@@ -7,7 +7,7 @@ from typing import Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from core.config import get_config
+from core.config_new.unified_manager import get_config
 from core.clients.vllm_smoldocling import VLLMSmolDoclingClient
 from core.clients.hochschul_llm import HochschulLLMClient
 
@@ -47,7 +47,7 @@ async def health_check():
             health_info = await vllm_client.health_check()
             services["vllm_smoldocling"] = {
                 "status": health_info["status"],
-                "endpoint": config.parsing.pdf.vllm_endpoint,
+                "endpoint": config.services.vllm.url,
                 "purpose": "PDF parsing (GPU 1)",
                 "response_time_ms": health_info.get("response_time_ms", 0),
                 "model_info": health_info.get("model_info", {}),
@@ -57,7 +57,7 @@ async def health_check():
         logger.error(f"vLLM SmolDocling health check failed: {e}")
         services["vllm_smoldocling"] = {
             "status": "unhealthy",
-            "endpoint": config.parsing.pdf.vllm_endpoint,
+            "endpoint": config.services.vllm.url,
             "error": str(e)
         }
     
@@ -66,11 +66,11 @@ async def health_check():
         hochschul_client = HochschulLLMClient()
         health_info = await hochschul_client.health_check()
         
-        if config.llm.hochschul:
+        if config.models.llm.provider == "hochschul":
             services["hochschul_llm"] = {
                 "status": health_info["status"],
-                "endpoint": config.llm.hochschul.endpoint,
-                "model": config.llm.hochschul.model,
+                "endpoint": config.services.hochschul_llm.url,
+                "model": config.services.hochschul_llm.model,
                 "purpose": "Triple extraction (GPU 2)",
                 "message": health_info.get("message", "")
             }
@@ -91,7 +91,7 @@ async def health_check():
         # TODO: Implement actual health check
         services["fuseki"] = {
             "status": "healthy",
-            "endpoint": config.storage.triple_store.endpoint,
+            "endpoint": config.services.fuseki.url,
             "purpose": "RDF triple storage"
         }
     except Exception as e:
@@ -106,7 +106,7 @@ async def health_check():
         # TODO: Implement actual health check
         services["chromadb"] = {
             "status": "healthy",
-            "endpoint": config.storage.vector_store.endpoint,
+            "endpoint": config.services.chromadb.url,
             "purpose": "Vector embeddings storage"
         }
     except Exception as e:
@@ -182,19 +182,19 @@ async def service_health(service_name: str):
     
     service_configs = {
         "vllm_smoldocling": {
-            "endpoint": config.parsing.pdf.vllm_endpoint,
+            "endpoint": config.services.vllm.url,
             "purpose": "PDF parsing with vLLM SmolDocling (GPU 1)",
         },
         "hochschul_llm": {
-            "endpoint": config.llm.hochschul.endpoint if config.llm.hochschul else None,
+            "endpoint": config.services.hochschul_llm.url if config.models.llm.provider == "hochschul" else None,
             "purpose": "Triple extraction with Hochschul-LLM (GPU 2)",
         },
         "fuseki": {
-            "endpoint": config.storage.triple_store.endpoint,
+            "endpoint": config.services.fuseki.url,
             "purpose": "RDF triple storage with Apache Jena Fuseki",
         },
         "chromadb": {
-            "endpoint": config.storage.vector_store.endpoint,
+            "endpoint": config.services.chromadb.url,
             "purpose": "Vector embeddings storage with ChromaDB",
         },
         "ollama": {

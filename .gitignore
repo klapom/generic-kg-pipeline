@@ -78,6 +78,27 @@ models/
 logs/
 *.log
 
+# HTML and test reports
+*.html
+tests/debugging/
+test_outputs/
+debug_outputs/
+
+# Images and media files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.svg
+*.ico
+
+# PDF and Office documents
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+
 # OS
 .DS_Store
 .DS_Store?

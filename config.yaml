@@ -1,0 +1,189 @@
+api:
+  docs:
+    enabled: true
+    path: /docs
+  security:
+    cors_enabled: true
+    cors_origins:
+    - '*'
+    rate_limiting: false
+  server:
+    host: ${API_HOST:0.0.0.0}
+    port: ${API_PORT:8000}
+    workers: ${API_WORKERS:4}
+batch:
+  processing:
+    chunk_timeout: 300
+    max_workers: ${MAX_WORKERS:4}
+    queue_size: 100
+  resources:
+    cpu_limit: 4
+    memory_limit_gb: 8
+  retry:
+    delay_seconds: 5
+    exponential_backoff: true
+    max_attempts: 3
+chunking:
+  context:
+    include_visual_context: true
+    inherit_metadata: true
+    max_inheritance_depth: 3
+  default:
+    chunk_overlap: ${CHUNK_OVERLAP:200}
+    chunk_size: ${CHUNK_SIZE:1000}
+    strategy: ${CHUNKING_STRATEGY:semantic}
+  strategies:
+    docx:
+      preserve_lists: true
+      respect_headings: true
+    pdf:
+      max_chunk_size: 1500
+      preserve_tables: true
+      respect_page_boundaries: true
+      table_as_single_chunk: true
+    txt:
+      min_chunk_size: 100
+      split_by: sentence
+    xlsx:
+      by_sheet: true
+      include_headers: true
+domain:
+  enabled_formats:
+  - pdf
+  - docx
+  - xlsx
+  - pptx
+  - txt
+  name: ${DOMAIN_NAME:general}
+  ontology_path: plugins/ontologies/${domain.name}.ttl
+features:
+  caching: ${ENABLE_CACHING:true}
+  context_enhancement: ${ENABLE_CONTEXT:true}
+  multi_language: ${ENABLE_MULTILANG:false}
+  parallel_processing: ${ENABLE_PARALLEL:true}
+  rag_generation: ${ENABLE_RAG:false}
+  table_extraction: ${ENABLE_TABLE_EXTRACTION:true}
+  visual_analysis: ${ENABLE_VISUAL_ANALYSIS:true}
+general:
+  debug: ${DEBUG:false}
+  log_level: ${LOG_LEVEL:INFO}
+  name: Generic Knowledge Graph Pipeline
+  version: 1.0.0
+models:
+  llm:
+    max_tokens: ${LLM_MAX_TOKENS:4000}
+    provider: ${LLM_PROVIDER:hochschul}
+    stream: false
+    temperature: ${LLM_TEMPERATURE:0.1}
+    top_p: ${LLM_TOP_P:0.9}
+  vision:
+    qwen_vl:
+      enabled: ${QWEN_VL_ENABLED:true}
+      gpu_memory_utilization: ${QWEN_VL_GPU_MEMORY:0.8}
+      max_image_size: 1024
+      model_id: Qwen/Qwen2-VL-7B-Instruct
+    smoldocling:
+      dtype: float16
+      enabled: ${SMOLDOCLING_ENABLED:true}
+      gpu_memory_utilization: ${SMOLDOCLING_GPU_MEMORY:0.2}
+      max_pages: ${SMOLDOCLING_MAX_PAGES:15}
+      model_id: numinamath/SmolDocling-256M-Preview
+      trust_remote_code: true
+monitoring:
+  health:
+    enabled: true
+    interval_seconds: 60
+    timeout_seconds: 10
+  logging:
+    include_context: true
+    max_file_size_mb: 100
+    retention_days: 7
+    structured: true
+  metrics:
+    enabled: ${METRICS_ENABLED:false}
+    interval_seconds: 30
+    port: ${METRICS_PORT:9090}
+parsing:
+  common:
+    encoding: utf-8
+    language_detection: true
+    max_file_size_mb: ${MAX_FILE_SIZE:100}
+    timeout_seconds: 120
+  office:
+    extract_images: true
+    extract_tables: true
+    preserve_formatting: true
+  pdf:
+    complex_detection:
+      coverage_threshold: 0.8
+      enabled: true
+      min_tables: 1
+      min_text_blocks: 2
+    layout:
+      table_x_tolerance: 3
+      table_y_tolerance: 3
+      text_x_tolerance: 5
+      text_y_tolerance: 5
+      use_layout: true
+    pdfplumber_mode: ${PDFPLUMBER_MODE:1}
+    provider: ${PDF_PARSER:hybrid}
+    table_extraction:
+      enabled: true
+      preserve_structure: true
+      separate_tables: true
+profile: ${PROFILE:dev}
+services:
+  chromadb:
+    collection: ${CHROMADB_COLLECTION:documents}
+    url: ${CHROMADB_URL:http://localhost:8000}
+  fuseki:
+    dataset: ${FUSEKI_DATASET:kg_dataset}
+    timeout: 30
+    url: ${FUSEKI_URL:http://localhost:3030}
+  hochschul_llm:
+    api_key: ${HOCHSCHUL_LLM_API_KEY:}
+    model: meta-llama/Meta-Llama-3.1-8B-Instruct
+    timeout: ${HOCHSCHUL_LLM_TIMEOUT:60}
+    url: ${HOCHSCHUL_LLM_URL:http://localhost:8001}
+  ollama:
+    enabled: ${OLLAMA_ENABLED:false}
+    model: ${OLLAMA_MODEL:llama2}
+    url: ${OLLAMA_URL:http://localhost:11434}
+  vllm:
+    health_check_enabled: true
+    retry_attempts: 3
+    timeout: ${VLLM_TIMEOUT:300}
+    url: ${VLLM_URL:http://localhost:8002}
+storage:
+  directories:
+    logs: ${LOG_DIR:logs}
+    output: ${OUTPUT_DIR:data/output}
+    processed: ${PROCESSED_DIR:data/processed}
+    temp: ${TEMP_DIR:/tmp/kg_pipeline}
+  files:
+    compression: false
+    keep_processed: true
+    timestamp_format: '%Y%m%d_%H%M%S'
+templates:
+  active:
+    context_generation: context_generation.txt
+    task_with_context: task_with_context.txt
+    triple_extraction: kg_extraction_prompt.txt
+  paths:
+    base: plugins/templates
+    custom: ${CUSTOM_TEMPLATES_PATH:}
+triples:
+  extraction:
+    confidence_threshold: 0.7
+    min_triple_length: 3
+    patterns:
+    - entity_relation_entity
+    - subject_predicate_object
+  generation:
+    batch_size: ${TRIPLE_BATCH_SIZE:10}
+    context_window: 2000
+    include_metadata: true
+    use_coreferences: true
+  validation:
+    allow_new_predicates: false
+    check_ontology: true

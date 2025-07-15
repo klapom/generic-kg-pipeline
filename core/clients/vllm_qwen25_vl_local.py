@@ -17,7 +17,7 @@ from PIL import Image
 
 from core.vllm.base_client import BaseVLLMClient, InferenceRequest, InferenceResult
 from core.vllm.model_manager import ModelConfig, SamplingConfig
-from plugins.parsers.base_parser import VisualElementType
+from core.parsers.interfaces.data_models import VisualElementType
 
 logger = logging.getLogger(__name__)
 

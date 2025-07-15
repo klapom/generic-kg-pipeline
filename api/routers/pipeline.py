@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from core.config import get_config
+from core.config_new.unified_manager import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +219,7 @@ async def execute_pipeline_operation(operation: PipelineOperation):
     if operation.operation == "validate_config":
         try:
             config = get_config()
-            config.validate_config()
+            # Config is automatically validated by Pydantic
             return {
                 "operation": "validate_config",
                 "status": "success",
