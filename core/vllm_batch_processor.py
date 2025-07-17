@@ -17,11 +17,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from core.vllm.model_manager import VLLMModelManager, model_manager
-from core.clients.vllm_smoldocling_local import VLLMSmolDoclingClient
+from core.clients.vllm_smoldocling_final import VLLMSmolDoclingFinalClient as VLLMSmolDoclingClient
 from core.clients.vllm_qwen25_vl_local import VLLMQwen25VLClient
 from core.content_chunker import ContentChunker
-from plugins.parsers.parser_factory import ParserFactory
-from plugins.parsers.base_parser import Document, DocumentType
+from core.parsers import ParserFactory, Document, DocumentType
 
 logger = logging.getLogger(__name__)
 

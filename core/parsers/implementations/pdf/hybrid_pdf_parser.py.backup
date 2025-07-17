@@ -1,0 +1,697 @@
+"""
+Hybrid PDF Parser that combines SmolDocling with fallback extractors
+"""
+
+import logging
+import re
+from pathlib import Path
+from typing import List, Optional, Dict, Any, Tuple
+from datetime import datetime
+
+from core.parsers.interfaces import (
+    BaseParser, Document, Segment, ParseError, DocumentType,
+    VisualElement, VisualElementType, SegmentType, TextSubtype,
+    VisualSubtype, TableSubtype
+)
+from core.parsers.implementations.pdf.extractors.pdfplumber_extractor import PDFPlumberExtractor
+# Import moved to __init__ to avoid circular dependency
+from core.parsers.strategies.table_text_separator import TableTextSeparator, clean_page_content
+
+logger = logging.getLogger(__name__)
+
+
+class HybridPDFParser(BaseParser):
+    """
+    Unified PDF parser that combines SmolDocling with fallback mechanisms
+    
+    Features:
+    - Advanced PDF parsing with SmolDocling (VLM, images, formulas)
+    - Intelligent fallback to pdfplumber for complex layouts
+    - Configurable extraction modes and VLM support
+    - Multi-modal content analysis with visual element extraction
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None, enable_vlm: bool = True):
+        super().__init__(config, enable_vlm)
+        self.supported_types = {DocumentType.PDF}
+        
+        # VLM Configuration
+        self.enable_vlm = enable_vlm
+        self.config.setdefault("extract_images", True)
+        self.config.setdefault("extract_tables", True)
+        self.config.setdefault("extract_formulas", True)
+        self.config.setdefault("image_min_size", 50)
+        
+        # Initialize parsers
+        # Lazy import to avoid circular dependency
+        # Choose between final docling-enabled client or legacy client
+        use_docling_final = config.get('use_docling_final', False) if config else False
+        environment = config.get('environment', 'development') if config else 'development'
+        
+        if use_docling_final:
+            logger.info("Using VLLMSmolDoclingFinalClient with docling integration")
+            from core.clients.vllm_smoldocling_final import VLLMSmolDoclingFinalClient
+            self.smoldocling_client = VLLMSmolDoclingFinalClient(
+                max_pages=config.get('max_pages', 50) if config else 50,
+                gpu_memory_utilization=config.get('gpu_memory_utilization', 0.3) if config else 0.3,
+                environment=environment
+            )
+        else:
+            logger.info("Using legacy VLLMSmolDoclingClient")
+            from core.clients.vllm_smoldocling_local import VLLMSmolDoclingClient
+            self.smoldocling_client = VLLMSmolDoclingClient(
+                max_pages=config.get('max_pages', 50) if config else 50,
+                gpu_memory_utilization=config.get('gpu_memory_utilization', 0.2) if config else 0.2
+            )
+        
+        # Fallback extractor
+        self.pdfplumber_extractor = PDFPlumberExtractor()
+        
+        # Table/Text separator
+        self.separator = TableTextSeparator()
+        
+        # Use bbox filtering for advanced extraction
+        self.use_bbox_filtering = config.get('use_bbox_filtering', False) if config else False
+        
+        # Config
+        self.use_pdfplumber = config.get('prefer_pdfplumber', False) if config else False
+        self.fallback_threshold = config.get('fallback_confidence_threshold', 0.8) if config else 0.8
+        self.separate_tables = config.get('separate_tables', True) if config else True
+        
+        # pdfplumber mode: 0=never, 1=fallback only, 2=always parallel
+        self.pdfplumber_mode = config.get('pdfplumber_mode', 1) if config else 1
+        
+        # Layout settings for pdfplumber
+        self.layout_settings = config.get('layout_settings', {
+            'use_layout': True,
+            'table_x_tolerance': 3,
+            'table_y_tolerance': 3,
+            'text_x_tolerance': 5,
+            'text_y_tolerance': 5
+        }) if config else {
+            'use_layout': True,
+            'table_x_tolerance': 3,
+            'table_y_tolerance': 3,
+            'text_x_tolerance': 5,
+            'text_y_tolerance': 5
+        }
+        
+        logger.info(f"Initialized HybridPDFParser with pdfplumber_mode={self.pdfplumber_mode} "
+                   f"(0=never, 1=fallback, 2=parallel), VLM={enable_vlm}")
+    
+    async def parse(self, file_path: Path) -> Document:
+        """Parse PDF using hybrid approach with VLM support"""
+        # Get base document without VLM analysis
+        document = self._parse_sync(file_path)
+        
+        # Analyze visual elements with VLM if enabled
+        if self.enable_vlm and document.visual_elements:
+            logger.info(f"🧠 Analyzing {len(document.visual_elements)} visual elements with VLM...")
+            document.visual_elements = await self.analyze_visual_elements(
+                document.visual_elements,
+                {"document_type": "pdf", "title": document.metadata.title}
+            )
+            logger.info("✅ VLM analysis completed")
+            
+            # Update visual segments with VLM descriptions
+            logger.info("📝 Updating visual segments with VLM descriptions...")
+            document.segments = await self.update_visual_segments(
+                document.segments,
+                document.visual_elements
+            )
+            logger.info("✅ Visual segments updated")
+        
+        return document
+    
+    def _parse_sync(self, file_path: Path) -> Document:
+        """
+        Parse PDF using hybrid approach
+        
+        1. First pass with SmolDocling
+        2. Identify pages needing fallback
+        3. Re-process those pages with fallback extractor
+        4. Merge results
+        """
+        try:
+            if not file_path or not file_path.exists():
+                raise ParseError(f"Invalid document path: {file_path}")
+            
+            pdf_path = Path(file_path)
+            segments = []
+            visual_elements = []
+            
+            logger.info(f"🚀 Starting hybrid PDF parsing: {pdf_path.name}")
+            start_time = datetime.now()
+            
+            # Extract metadata
+            metadata = self.extract_metadata(pdf_path)
+            
+            # Mode 2: Always use parallel extraction
+            if self.pdfplumber_mode == 2:
+                logger.info("📚 Mode 2: Using parallel extraction (SmolDocling + pdfplumber)")
+                segments, visual_elements = self._parallel_extraction(pdf_path)
+            
+            # Mode 0 or 1: SmolDocling first
+            else:
+                # Primary extraction with SmolDocling
+                logger.info("🤖 Primary extraction with SmolDocling...")
+                try:
+                    smoldocling_result = self.smoldocling_client.parse_pdf(pdf_path)
+                    
+                    # Analyze results and decide on fallback
+                    pages_needing_fallback = []
+                    
+                    for idx, page_data in enumerate(smoldocling_result.pages):
+                        # Create segment from SmolDocling
+                        logger.info(f"🔍 Processing SmolDocling page result {idx+1}/{len(smoldocling_result.pages)}")
+                        logger.info(f"  Page data type: {type(page_data)}")
+                        logger.info(f"  Has page_number: {hasattr(page_data, 'page_number')}")
+                        if hasattr(page_data, 'page_number'):
+                            logger.info(f"  Page number: {page_data.page_number}")
+                        if hasattr(page_data, 'confidence_score'):
+                            logger.info(f"  Confidence score: {page_data.confidence_score}")
+                        
+                        # Ensure page_data has required attributes
+                        if not hasattr(page_data, 'confidence_score'):
+                            logger.warning(f"Page {idx+1} missing confidence_score, setting to 0.0")
+                            page_data.confidence_score = 0.0
+                        if not hasattr(page_data, 'page_number'):
+                            logger.warning(f"Page {idx+1} missing page_number, setting to {idx+1}")
+                            page_data.page_number = idx + 1
+                        
+                        if page_data.confidence_score >= self.fallback_threshold:
+                            # Good confidence - use SmolDocling result
+                            segment, page_visuals = self._create_segment_from_smoldocling(page_data)
+                            segments.append(segment)
+                            visual_elements.extend(page_visuals)
+                        else:
+                            # Low confidence - mark for fallback
+                            pages_needing_fallback.append(page_data.page_number)
+                            # Still add SmolDocling result but mark it
+                            segment, page_visuals = self._create_segment_from_smoldocling(page_data)
+                            segment.metadata['needs_review'] = True
+                            segments.append(segment)
+                            visual_elements.extend(page_visuals)
+                    
+                    # Mode 1: Use fallback for low-confidence pages
+                    if self.pdfplumber_mode == 1 and pages_needing_fallback:
+                        logger.info(f"⚠️ {len(pages_needing_fallback)} pages need fallback extraction")
+                        self._apply_fallback_extraction(pdf_path, pages_needing_fallback, segments)
+                    
+                except Exception as e:
+                    import traceback
+                    logger.error(f"SmolDocling failed: {e}")
+                    logger.error(f"Full traceback:\n{traceback.format_exc()}")
+                    # Fall back to pdfplumber for entire document
+                    if self.pdfplumber_mode != 0:
+                        logger.info("🔄 Falling back to pdfplumber for entire document")
+                        segments = self._extract_with_pdfplumber(pdf_path)
+            
+            # Post-process segments
+            segments = self._post_process_segments(segments)
+            
+            # Create visual segments
+            visual_segments = self._create_visual_segments(visual_elements)
+            
+            # Merge all segments, maintaining page order
+            all_segments = self._merge_segments_by_page(segments, visual_segments)
+            
+            # Extract image bytes for visual elements (skip if already extracted by docling)
+            if visual_elements and self.config.get('extract_images', True):
+                # Check if any visual elements need image extraction
+                elements_needing_extraction = [ve for ve in visual_elements if ve.raw_data is None]
+                elements_with_data = [ve for ve in visual_elements if ve.raw_data is not None]
+                
+                if elements_with_data:
+                    logger.info(f"📷 {len(elements_with_data)} visual elements already have image data (docling direct extraction)")
+                
+                if elements_needing_extraction:
+                    logger.info(f"📷 Extracting image bytes for {len(elements_needing_extraction)} visual elements")
+                    self._extract_image_bytes(pdf_path, elements_needing_extraction)
+                else:
+                    logger.info("📷 All visual elements already have image data - skipping extraction")
+            
+            # Create document
+            elapsed = (datetime.now() - start_time).total_seconds()
+            logger.info(f"✅ Hybrid parsing completed in {elapsed:.2f}s: "
+                       f"{len(all_segments)} segments (including {len(visual_segments)} visual), "
+                       f"{len(visual_elements)} visual elements")
+            
+            # Create document with visual elements
+            return self.create_document(
+                file_path=pdf_path,
+                segments=all_segments,
+                metadata=metadata,
+                visual_elements=visual_elements
+            )
+            
+        except Exception as e:
+            logger.error(f"Hybrid PDF parsing failed: {e}")
+            raise ParseError(f"Failed to parse PDF: {e}") from e
+    
+    def _extract_image_bytes(self, pdf_path: Path, visual_elements: List[VisualElement]) -> None:
+        """Extract actual image bytes for visual elements from PDF"""
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(str(pdf_path))
+            
+            for visual in visual_elements:
+                if not visual.bounding_box or not visual.page_or_slide:
+                    continue
+                    
+                try:
+                    page = doc[visual.page_or_slide - 1]
+                    
+                    # Get page dimensions for scaling
+                    page_rect = page.rect
+                    page_width = page_rect.width
+                    page_height = page_rect.height
+                    
+                    # Scale from SmolDocling's 0-500 coordinate system to page coordinates
+                    scale_x = page_width / 500.0
+                    scale_y = page_height / 500.0
+                    
+                    # Convert bbox to fitz.Rect with proper scaling
+                    bbox = visual.bounding_box
+                    if isinstance(bbox, list) and len(bbox) >= 4:
+                        x0 = bbox[0] * scale_x
+                        y0 = bbox[1] * scale_y
+                        x1 = bbox[2] * scale_x
+                        y1 = bbox[3] * scale_y
+                    else:
+                        continue
+                    
+                    rect = fitz.Rect(x0, y0, x1, y1)
+                    
+                    # Extract with zoom for better quality
+                    mat = fitz.Matrix(2, 2)  # 2x zoom
+                    pix = page.get_pixmap(matrix=mat, clip=rect)
+                    
+                    # Get image bytes
+                    img_data = pix.tobytes("png")
+                    visual.raw_data = img_data
+                    
+                    logger.debug(f"Extracted {len(img_data)} bytes for visual on page {visual.page_or_slide}")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to extract image for visual element: {e}")
+                    
+            doc.close()
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract image bytes from PDF: {e}")
+            # Continue without image bytes
+    
+    def _create_segment_from_smoldocling(self, page_data: Any) -> Tuple[Segment, List[VisualElement]]:
+        """Convert SmolDocling page data to Segment"""
+        try:
+            logger.info(f"📄 Processing page {page_data.page_number} from SmolDocling")
+            content_parts = []
+            
+            # Check for different content types in the page
+            segments_created = []
+            
+            # Add text content
+            if hasattr(page_data, 'text') and page_data.text:
+                logger.info(f"  Page {page_data.page_number}: Adding text of length {len(page_data.text)}")
+                content_parts.append(page_data.text)
+            else:
+                logger.info(f"  Page {page_data.page_number}: No text content")
+            
+            # Check for list items in layout_info (SmolDocling may provide structured content)
+            if hasattr(page_data, 'layout_info') and isinstance(page_data.layout_info, dict):
+                extracted_data = page_data.layout_info.get('extracted_data', {})
+                
+                # Check for list items
+                if 'list_items' in extracted_data:
+                    list_items = extracted_data['list_items']
+                    if list_items:
+                        logger.info(f"  Page {page_data.page_number}: Found {len(list_items)} list items")
+                        list_content = "\n".join([f"• {item}" for item in list_items])
+                        content_parts.append(f"\n[LIST]\n{list_content}\n[/LIST]")
+            
+            # Add tables
+            tables = getattr(page_data, 'tables', [])
+            logger.info(f"  Page {page_data.page_number}: Processing {len(tables)} tables")
+            for i, table in enumerate(tables):
+                logger.debug(f"  Table {i}: {table}")
+                table_text = self._format_table(table)
+                content_parts.append(f"\n[TABLE]\n{table_text}\n[/TABLE]")
+            
+            # Combine all content
+            content = "\n".join(content_parts)
+            logger.info(f"  Page {page_data.page_number}: Combined content length: {len(content)}")
+            
+            # If no content, create placeholder for image-only pages
+            if not content.strip():
+                content = f"[Page {page_data.page_number}: Visual content only]"
+                logger.info(f"  Page {page_data.page_number}: No text content, using placeholder")
+            
+            # Determine segment type and subtype
+            # Check if content contains list markers
+            has_list = "[LIST]" in content or bool(re.search(r'^[•\-\*]\s+', content, re.MULTILINE))
+            has_table = "[TABLE]" in content
+            has_text = hasattr(page_data, 'text') and page_data.text
+            has_tables = tables and len(tables) > 0
+            
+            if has_list and not has_tables:
+                # Pure list content
+                segment_type = SegmentType.TEXT
+                segment_subtype = TextSubtype.LIST.value
+            elif has_tables and has_text:
+                # Mixed content - treat as text with tables
+                segment_type = SegmentType.TEXT
+                segment_subtype = TextSubtype.PARAGRAPH.value
+            elif has_tables:
+                # Only tables
+                segment_type = SegmentType.TABLE
+                segment_subtype = TableSubtype.DATA.value
+            else:
+                # Text only - try to determine subtype
+                segment_type = SegmentType.TEXT
+                segment_subtype = self._determine_text_subtype(content)
+        
+            segment = Segment(
+                content=content,
+                page_number=page_data.page_number,
+                segment_type=segment_type,
+                segment_subtype=segment_subtype,
+                metadata={
+                    "confidence": getattr(page_data, 'confidence_score', 0.0),
+                    "has_tables": len(tables) > 0,
+                    "has_images": len(getattr(page_data, 'images', [])) > 0,
+                    "extractor": "smoldocling"
+                }
+            )
+        
+            # Extract visual elements (images, formulas)
+            visual_elements = []
+            
+            # Check if page_data already has visual_elements (from docling final client)
+            if hasattr(page_data, 'visual_elements') and page_data.visual_elements:
+                logger.info(f"  Page {page_data.page_number}: Using {len(page_data.visual_elements)} pre-extracted visual elements (docling)")
+                visual_elements.extend(page_data.visual_elements)
+                
+                # Add references to main segment
+                for visual_elem in page_data.visual_elements:
+                    segment.visual_references.append(visual_elem.content_hash)
+            
+            # Otherwise, process images and formulas from legacy format
+            elif self.config.get('extract_images', True) and hasattr(page_data, 'images'):
+                for image in page_data.images:
+                    # Extract bbox if available
+                    bbox = getattr(image, 'bbox', None)
+                    if not bbox and hasattr(image, 'content'):
+                        # Try to extract bbox from content
+                        loc_match = re.search(r'<loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>', str(image.content))
+                        if loc_match:
+                            bbox = [int(loc_match.group(i)) for i in range(1, 5)]
+                    
+                    # Create VisualElement
+                    visual_elem = VisualElement(
+                        element_type=VisualElementType.IMAGE,
+                        source_format=DocumentType.PDF,
+                        content_hash=VisualElement.create_hash(str(image).encode()),
+                        page_or_slide=page_data.page_number,
+                        bounding_box=bbox,  # Add bbox
+                        vlm_description=getattr(image, 'description', None),
+                        analysis_metadata={
+                            "caption": getattr(image, 'caption', None),
+                            "type": getattr(image, 'image_type', 'unknown')
+                        }
+                    )
+                    visual_elements.append(visual_elem)
+                    
+                    # Add reference to main segment
+                    segment.visual_references.append(visual_elem.content_hash)
+                
+                # Process formulas (legacy format)
+                if self.config.get('extract_formulas', True) and hasattr(page_data, 'formulas'):
+                    for formula in page_data.formulas:
+                        # Create VisualElement
+                        visual_elem = VisualElement(
+                            element_type=VisualElementType.FORMULA,
+                            source_format=DocumentType.PDF,
+                            content_hash=VisualElement.create_hash(str(formula).encode()),
+                            page_or_slide=page_data.page_number,
+                            extracted_data={
+                                "latex": getattr(formula, 'latex', None),
+                                "mathml": getattr(formula, 'mathml', None)
+                            },
+                            vlm_description=getattr(formula, 'description', None)
+                        )
+                        visual_elements.append(visual_elem)
+                        
+                        # Add reference to main segment
+                        segment.visual_references.append(visual_elem.content_hash)
+            
+            return segment, visual_elements
+        except Exception as e:
+            logger.error(f"Error in _create_segment_from_smoldocling for page {getattr(page_data, 'page_number', '?')}: {e}")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+            # Return minimal segment
+            return Segment(
+                content="[Error processing page]",
+                page_number=getattr(page_data, 'page_number', 1),
+                segment_type=SegmentType.TEXT,
+                segment_subtype=TextSubtype.PARAGRAPH.value,
+                metadata={"error": str(e)}
+            ), []
+    
+    def _determine_text_subtype(self, content: str) -> str:
+        """Determine text subtype based on content patterns"""
+        try:
+            # Handle empty content
+            if not content:
+                logger.debug("Empty content in _determine_text_subtype")
+                return TextSubtype.PARAGRAPH.value
+            
+            # Simple heuristics for PDF content
+            content_lower = content.lower().strip()
+            
+            # Check for headings (common patterns in PDFs)
+            if len(content) < 100:  # Short text might be a heading
+                # Check for title patterns
+                if content and len(content) > 0:  # Ensure content is not empty
+                    # Safely check first character
+                    if content.isupper() or (len(content) > 0 and content[0].isupper() and len(content.split()) < 10):
+                        # Check for numbered sections
+                        if any(content.startswith(f"{i}.") or content.startswith(f"{i})") for i in range(1, 20)):
+                            return TextSubtype.HEADING_2.value
+                        elif content_lower.startswith(("chapter", "section", "part")):
+                            return TextSubtype.HEADING_1.value
+                        else:
+                            return TextSubtype.TITLE.value
+        
+            # Check for list patterns
+            if "[LIST]" in content or content.startswith(('• ', '- ', '* ', '○ ')) or any(content.startswith(f"{i}.") for i in range(1, 20)):
+                return TextSubtype.LIST.value
+            
+            # Check for code blocks (indented text)
+            if content.startswith('    ') or content.startswith('\t'):
+                return TextSubtype.CODE.value
+            
+            # Default to paragraph
+            return TextSubtype.PARAGRAPH.value
+        except Exception as e:
+            logger.warning(f"Error in _determine_text_subtype: {e}, defaulting to PARAGRAPH")
+            return TextSubtype.PARAGRAPH.value
+    
+    def _format_table(self, table: Any) -> str:
+        """Format table data as text"""
+        lines = []
+        if hasattr(table, 'caption') and table.caption:
+            lines.append(table.caption)
+        
+        if hasattr(table, 'headers') and table.headers:
+            lines.append(" | ".join(table.headers))
+            lines.append("-" * 50)
+        
+        if hasattr(table, 'rows'):
+            for row in table.rows:
+                lines.append(" | ".join(str(cell) for cell in row))
+        
+        return "\n".join(lines)
+    
+    def _parallel_extraction(self, pdf_path: Path) -> List[Segment]:
+        """Extract using both SmolDocling and pdfplumber in parallel"""
+        segments = []
+        
+        # Get both extractions
+        visual_elements = []
+        try:
+            smoldocling_result = self.smoldocling_client.parse_pdf(pdf_path)
+            smoldocling_segments = {}
+            for page in smoldocling_result.pages:
+                segment, page_visuals = self._create_segment_from_smoldocling(page)
+                smoldocling_segments[page.page_number] = segment
+                visual_elements.extend(page_visuals)
+        except:
+            smoldocling_segments = {}
+        
+        pdfplumber_segments = self._extract_with_pdfplumber(pdf_path)
+        
+        # Merge results - prefer SmolDocling but use pdfplumber for missing/low-confidence
+        all_pages = set(smoldocling_segments.keys()) | {s.page_number for s in pdfplumber_segments}
+        
+        for page_num in sorted(all_pages):
+            smol_seg = smoldocling_segments.get(page_num)
+            plumb_seg = next((s for s in pdfplumber_segments if s.page_number == page_num), None)
+            
+            if smol_seg and smol_seg.metadata.get('confidence', 0) >= self.fallback_threshold:
+                segments.append(smol_seg)
+            elif plumb_seg:
+                segments.append(plumb_seg)
+            elif smol_seg:
+                segments.append(smol_seg)
+        
+        return segments, visual_elements
+    
+    def _apply_fallback_extraction(self, pdf_path: Path, pages: List[int], segments: List[Segment]):
+        """Apply fallback extraction to specific pages"""
+        fallback_segments = self._extract_with_pdfplumber(pdf_path, pages)
+        
+        # Replace low-confidence segments
+        for fallback_seg in fallback_segments:
+            # Find and replace the corresponding segment
+            for i, seg in enumerate(segments):
+                if seg.page_number == fallback_seg.page_number:
+                    # Merge or replace based on content quality
+                    if len(fallback_seg.content) > len(seg.content) * 1.2:
+                        # Fallback has significantly more content
+                        segments[i] = fallback_seg
+                    break
+    
+    def _extract_with_pdfplumber(self, pdf_path: Path, pages: Optional[List[int]] = None) -> List[Segment]:
+        """Extract text using pdfplumber"""
+        return self.pdfplumber_extractor.extract(
+            pdf_path, 
+            pages=pages,
+            layout_settings=self.layout_settings,
+            separate_tables=self.separate_tables,
+            use_bbox_filtering=self.use_bbox_filtering
+        )
+    
+    def _post_process_segments(self, segments: List[Segment]) -> List[Segment]:
+        """Post-process segments for quality improvement"""
+        processed = []
+        
+        for segment in segments:
+            # Clean content
+            if segment.content:
+                segment.content = clean_page_content(segment.content)
+                
+                # Skip empty segments
+                if not segment.content.strip():
+                    continue
+                
+                # Separate tables if enabled
+                # Check for table type segments
+                is_table_segment = (
+                    (hasattr(segment.segment_type, 'value') and segment.segment_type == SegmentType.TABLE) or
+                    segment.segment_type == "table"
+                )
+                
+                if self.separate_tables and not is_table_segment:
+                    text_parts, table_parts = self.separator.separate_tables_from_text(segment.content)
+                    
+                    # Add text segment
+                    if text_parts:
+                        text_content = "\n".join(text_parts)
+                        if text_content.strip():
+                            processed.append(Segment(
+                                content=text_content,
+                                page_number=segment.page_number,
+                                segment_type=SegmentType.TEXT,
+                                segment_subtype=self._determine_text_subtype(text_content),
+                                segment_index=len(processed),
+                                metadata=segment.metadata
+                            ))
+                    
+                    # Add table segments
+                    for table in table_parts:
+                        if table.strip():
+                            processed.append(Segment(
+                                content=table,
+                                page_number=segment.page_number,
+                                segment_type=SegmentType.TABLE,
+                                segment_subtype=TableSubtype.DATA.value,
+                                segment_index=len(processed),
+                                metadata=segment.metadata
+                            ))
+                else:
+                    processed.append(segment)
+        
+        return processed
+    
+    def _create_visual_segments(self, visual_elements: List[VisualElement]) -> List[Segment]:
+        """Create segments from visual elements"""
+        visual_segments = []
+        
+        for i, visual_elem in enumerate(visual_elements):
+            # Determine visual subtype
+            if visual_elem.element_type == VisualElementType.IMAGE:
+                subtype = VisualSubtype.IMAGE.value
+            elif visual_elem.element_type == VisualElementType.CHART:
+                subtype = VisualSubtype.CHART.value
+            elif visual_elem.element_type == VisualElementType.DIAGRAM:
+                subtype = VisualSubtype.DIAGRAM.value
+            elif visual_elem.element_type == VisualElementType.FORMULA:
+                subtype = VisualSubtype.FORMULA.value
+            else:
+                subtype = VisualSubtype.IMAGE.value  # Default
+            
+            # Create placeholder content (to be filled by VLM later)
+            content = f"[{visual_elem.element_type.value.upper()}: Placeholder]"
+            
+            # Create visual segment
+            segment = Segment(
+                content=content,
+                page_number=visual_elem.page_or_slide,
+                segment_type=SegmentType.VISUAL,
+                segment_subtype=subtype,
+                visual_references=[visual_elem.content_hash],
+                metadata={
+                    "visual_type": visual_elem.element_type.value,
+                    "has_caption": bool(visual_elem.analysis_metadata.get("caption")),
+                    "caption": visual_elem.analysis_metadata.get("caption", ""),
+                    "confidence": visual_elem.confidence,
+                    "source": "pdf_visual_extraction"
+                }
+            )
+            
+            visual_segments.append(segment)
+        
+        return visual_segments
+    
+    def _merge_segments_by_page(self, text_segments: List[Segment], visual_segments: List[Segment]) -> List[Segment]:
+        """Merge text and visual segments, maintaining page order"""
+        # Group segments by page
+        segments_by_page = {}
+        
+        # Add text segments
+        for segment in text_segments:
+            page = segment.page_number or 1
+            if page not in segments_by_page:
+                segments_by_page[page] = []
+            segments_by_page[page].append(segment)
+        
+        # Add visual segments
+        for segment in visual_segments:
+            page = segment.page_number or 1
+            if page not in segments_by_page:
+                segments_by_page[page] = []
+            segments_by_page[page].append(segment)
+        
+        # Merge and re-index
+        all_segments = []
+        for page in sorted(segments_by_page.keys()):
+            page_segments = segments_by_page[page]
+            # Sort by position within page if available
+            # For now, keep original order (text first, then visuals)
+            for segment in page_segments:
+                segment.segment_index = len(all_segments)
+                all_segments.append(segment)
+        
+        return all_segments

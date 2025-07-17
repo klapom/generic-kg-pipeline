@@ -9,17 +9,25 @@ from .interfaces import (
     DocumentMetadata,
     DocumentType,
     Segment,
+    SegmentType,
+    TextSubtype,
+    VisualSubtype,
+    TableSubtype,
+    MetadataSubtype,
     VisualElement,
     VisualElementType,
     ParseError,
-    ParserProtocol
+    ParserProtocol,
+    VisualAnalysisResult
 )
 
-# Note: Parser implementations will be added here after migration
-# from .implementations.pdf import PDFParser, HybridPDFParser
-# from .implementations.office import DOCXParser, XLSXParser, PPTXParser
-# from .implementations.text import TXTParser
-# from .factory import get_parser, register_parser
+# Parser implementations
+from .implementations.pdf import PDFParser, HybridPDFParser
+from .implementations.office import DOCXParser, XLSXParser, PPTXParser
+from .implementations.text import TXTParser
+
+# Factory
+from .parser_factory import ParserFactory, get_default_factory, parse_document, can_parse
 
 __all__ = [
     # Interfaces and models
@@ -28,20 +36,28 @@ __all__ = [
     'DocumentMetadata',
     'DocumentType',
     'Segment',
+    'SegmentType',
+    'TextSubtype',
+    'VisualSubtype',
+    'TableSubtype',
+    'MetadataSubtype',
     'VisualElement', 
     'VisualElementType',
     'ParseError',
     'ParserProtocol',
+    'VisualAnalysisResult',
     
-    # Implementations (to be added)
-    # 'PDFParser',
-    # 'HybridPDFParser',
-    # 'DOCXParser',
-    # 'XLSXParser',
-    # 'PPTXParser',
-    # 'TXTParser',
+    # Parser implementations
+    'PDFParser',
+    'HybridPDFParser',
+    'DOCXParser',
+    'XLSXParser',
+    'PPTXParser',
+    'TXTParser',
     
-    # Factory (to be added)
-    # 'get_parser',
-    # 'register_parser',
+    # Factory
+    'ParserFactory',
+    'get_default_factory',
+    'parse_document',
+    'can_parse'
 ]

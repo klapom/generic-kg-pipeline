@@ -16,8 +16,7 @@ sys.path.insert(0, str(project_root))
 
 from core.config import get_config
 from core.content_chunker import ContentChunker
-from plugins.parsers.parser_factory import ParserFactory
-from plugins.parsers.base_parser import DocumentType
+from core.parsers import ParserFactory, DocumentType
 
 
 # Configure detailed logging - will be updated per document

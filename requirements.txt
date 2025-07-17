@@ -15,6 +15,10 @@ python-pptx==0.6.23
 tiktoken==0.5.2
 Pillow==10.1.0
 
+# Docling Integration (NEW)
+docling>=2.26.0  # IBM's official DocTags parser
+docling-core>=2.0.0  # Core library for DocTags processing
+
 # Knowledge Graph
 SPARQLWrapper==2.0.0
 rdflib==7.0.0

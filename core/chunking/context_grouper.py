@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from plugins.parsers.base_parser import Document, DocumentType, Segment
+from core.parsers import Document, DocumentType, Segment
 from .chunk_models import (
     ContextualChunk,
     ContextGroup,

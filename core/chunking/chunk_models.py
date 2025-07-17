@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from plugins.parsers.base_parser import DocumentType, VisualElement
+from core.parsers import DocumentType, VisualElement
 
 
 class ChunkType(Enum):

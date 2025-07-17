@@ -1,6 +1,9 @@
 """Client modules for external services"""
 
-from .vllm_smoldocling import VLLMSmolDoclingClient
+from .vllm_smoldocling_final import VLLMSmolDoclingFinalClient
 from .hochschul_llm import HochschulLLMClient
 
-__all__ = ["VLLMSmolDoclingClient", "HochschulLLMClient"]
+# Legacy compatibility alias
+VLLMSmolDoclingClient = VLLMSmolDoclingFinalClient
+
+__all__ = ["VLLMSmolDoclingClient", "VLLMSmolDoclingFinalClient", "HochschulLLMClient"]

@@ -5,7 +5,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
-from plugins.parsers.base_parser import Document, Segment, VisualElement
+from core.parsers import Document, Segment, VisualElement
 from .chunk_models import (
     ContextualChunk,
     ChunkType,

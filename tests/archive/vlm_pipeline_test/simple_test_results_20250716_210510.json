@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-07-16T21:03:09.792110",
+  "tests": {
+    "model_manager": {
+      "success": true,
+      "message": "Model switching works correctly"
+    },
+    "document_classifier": {
+      "success": true,
+      "message": "Classification works correctly"
+    },
+    "confidence_evaluator": {
+      "success": true,
+      "message": "Confidence evaluation works correctly"
+    },
+    "two_stage_processor": {
+      "success": true,
+      "message": "Two-stage processing works correctly"
+    }
+  }
+}

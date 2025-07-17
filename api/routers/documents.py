@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from core.clients.vllm_smoldocling import VLLMSmolDoclingClient, SmolDoclingConfig
 from core.clients.hochschul_llm import HochschulLLMClient, TripleExtractionConfig
-from plugins.parsers.base_parser import ParseError
+from core.parsers import ParseError
 
 logger = logging.getLogger(__name__)
 

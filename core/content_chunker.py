@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from plugins.parsers.base_parser import Document, DocumentType
+from core.parsers import Document, DocumentType
 from core.config_new.unified_manager import get_config
 from core.chunking import (
     ContextualChunk,

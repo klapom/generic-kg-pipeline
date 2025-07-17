@@ -6,7 +6,7 @@ Extract and show COMPLETE content for entire BMW document
 import logging
 from pathlib import Path
 from core.parsers.advanced_pdf_extractor import AdvancedPDFExtractor
-from plugins.parsers.base_parser import Segment
+from core.parsers import Segment
 import pdfplumber
 
 # Set up logging

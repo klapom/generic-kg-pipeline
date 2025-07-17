@@ -3,6 +3,7 @@ Hybrid PDF Parser that combines SmolDocling with fallback extractors
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
@@ -43,10 +44,15 @@ class HybridPDFParser(BaseParser):
         
         # Initialize parsers
         # Lazy import to avoid circular dependency
-        from core.clients.vllm_smoldocling_local import VLLMSmolDoclingClient
-        self.smoldocling_client = VLLMSmolDoclingClient(
+        # Use unified VLLMSmolDoclingFinalClient
+        environment = config.get('environment', 'production') if config else 'production'
+        
+        logger.info(f"Initializing SmolDocling client for {environment} environment")
+        from core.clients.vllm_smoldocling_final import VLLMSmolDoclingFinalClient
+        self.smoldocling_client = VLLMSmolDoclingFinalClient(
             max_pages=config.get('max_pages', 50) if config else 50,
-            gpu_memory_utilization=config.get('gpu_memory_utilization', 0.2) if config else 0.2
+            gpu_memory_utilization=config.get('gpu_memory_utilization', 0.3) if config else 0.3,
+            environment=environment
         )
         
         # Fallback extractor
@@ -201,6 +207,21 @@ class HybridPDFParser(BaseParser):
             # Merge all segments, maintaining page order
             all_segments = self._merge_segments_by_page(segments, visual_segments)
             
+            # Extract image bytes for visual elements (skip if already extracted by docling)
+            if visual_elements and self.config.get('extract_images', True):
+                # Check if any visual elements need image extraction
+                elements_needing_extraction = [ve for ve in visual_elements if ve.raw_data is None]
+                elements_with_data = [ve for ve in visual_elements if ve.raw_data is not None]
+                
+                if elements_with_data:
+                    logger.info(f"📷 {len(elements_with_data)} visual elements already have image data (docling direct extraction)")
+                
+                if elements_needing_extraction:
+                    logger.info(f"📷 Extracting image bytes for {len(elements_needing_extraction)} visual elements")
+                    self._extract_image_bytes(pdf_path, elements_needing_extraction)
+                else:
+                    logger.info("📷 All visual elements already have image data - skipping extraction")
+            
             # Create document
             elapsed = (datetime.now() - start_time).total_seconds()
             logger.info(f"✅ Hybrid parsing completed in {elapsed:.2f}s: "
@@ -219,18 +240,86 @@ class HybridPDFParser(BaseParser):
             logger.error(f"Hybrid PDF parsing failed: {e}")
             raise ParseError(f"Failed to parse PDF: {e}") from e
     
+    def _extract_image_bytes(self, pdf_path: Path, visual_elements: List[VisualElement]) -> None:
+        """Extract actual image bytes for visual elements from PDF"""
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(str(pdf_path))
+            
+            for visual in visual_elements:
+                if not visual.bounding_box or not visual.page_or_slide:
+                    continue
+                    
+                try:
+                    page = doc[visual.page_or_slide - 1]
+                    
+                    # Get page dimensions for scaling
+                    page_rect = page.rect
+                    page_width = page_rect.width
+                    page_height = page_rect.height
+                    
+                    # Scale from SmolDocling's 0-500 coordinate system to page coordinates
+                    scale_x = page_width / 500.0
+                    scale_y = page_height / 500.0
+                    
+                    # Convert bbox to fitz.Rect with proper scaling
+                    bbox = visual.bounding_box
+                    if isinstance(bbox, list) and len(bbox) >= 4:
+                        x0 = bbox[0] * scale_x
+                        y0 = bbox[1] * scale_y
+                        x1 = bbox[2] * scale_x
+                        y1 = bbox[3] * scale_y
+                    else:
+                        continue
+                    
+                    rect = fitz.Rect(x0, y0, x1, y1)
+                    
+                    # Extract with zoom for better quality
+                    mat = fitz.Matrix(2, 2)  # 2x zoom
+                    pix = page.get_pixmap(matrix=mat, clip=rect)
+                    
+                    # Get image bytes
+                    img_data = pix.tobytes("png")
+                    visual.raw_data = img_data
+                    
+                    logger.debug(f"Extracted {len(img_data)} bytes for visual on page {visual.page_or_slide}")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to extract image for visual element: {e}")
+                    
+            doc.close()
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract image bytes from PDF: {e}")
+            # Continue without image bytes
+    
     def _create_segment_from_smoldocling(self, page_data: Any) -> Tuple[Segment, List[VisualElement]]:
         """Convert SmolDocling page data to Segment"""
         try:
             logger.info(f"📄 Processing page {page_data.page_number} from SmolDocling")
             content_parts = []
             
-            # Add text
+            # Check for different content types in the page
+            segments_created = []
+            
+            # Add text content
             if hasattr(page_data, 'text') and page_data.text:
                 logger.info(f"  Page {page_data.page_number}: Adding text of length {len(page_data.text)}")
                 content_parts.append(page_data.text)
             else:
                 logger.info(f"  Page {page_data.page_number}: No text content")
+            
+            # Check for list items in layout_info (SmolDocling may provide structured content)
+            if hasattr(page_data, 'layout_info') and isinstance(page_data.layout_info, dict):
+                extracted_data = page_data.layout_info.get('extracted_data', {})
+                
+                # Check for list items
+                if 'list_items' in extracted_data:
+                    list_items = extracted_data['list_items']
+                    if list_items:
+                        logger.info(f"  Page {page_data.page_number}: Found {len(list_items)} list items")
+                        list_content = "\n".join([f"• {item}" for item in list_items])
+                        content_parts.append(f"\n[LIST]\n{list_content}\n[/LIST]")
             
             # Add tables
             tables = getattr(page_data, 'tables', [])
@@ -250,10 +339,17 @@ class HybridPDFParser(BaseParser):
                 logger.info(f"  Page {page_data.page_number}: No text content, using placeholder")
             
             # Determine segment type and subtype
+            # Check if content contains list markers
+            has_list = "[LIST]" in content or bool(re.search(r'^[•\-\*]\s+', content, re.MULTILINE))
+            has_table = "[TABLE]" in content
             has_text = hasattr(page_data, 'text') and page_data.text
             has_tables = tables and len(tables) > 0
             
-            if has_tables and has_text:
+            if has_list and not has_tables:
+                # Pure list content
+                segment_type = SegmentType.TEXT
+                segment_subtype = TextSubtype.LIST.value
+            elif has_tables and has_text:
                 # Mixed content - treat as text with tables
                 segment_type = SegmentType.TEXT
                 segment_subtype = TextSubtype.PARAGRAPH.value
@@ -282,15 +378,33 @@ class HybridPDFParser(BaseParser):
             # Extract visual elements (images, formulas)
             visual_elements = []
             
-            # Process images
-            if self.config.get('extract_images', True) and hasattr(page_data, 'images'):
+            # Check if page_data already has visual_elements (from docling final client)
+            if hasattr(page_data, 'visual_elements') and page_data.visual_elements:
+                logger.info(f"  Page {page_data.page_number}: Using {len(page_data.visual_elements)} pre-extracted visual elements (docling)")
+                visual_elements.extend(page_data.visual_elements)
+                
+                # Add references to main segment
+                for visual_elem in page_data.visual_elements:
+                    segment.visual_references.append(visual_elem.content_hash)
+            
+            # Otherwise, process images and formulas from legacy format
+            elif self.config.get('extract_images', True) and hasattr(page_data, 'images'):
                 for image in page_data.images:
+                    # Extract bbox if available
+                    bbox = getattr(image, 'bbox', None)
+                    if not bbox and hasattr(image, 'content'):
+                        # Try to extract bbox from content
+                        loc_match = re.search(r'<loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>', str(image.content))
+                        if loc_match:
+                            bbox = [int(loc_match.group(i)) for i in range(1, 5)]
+                    
                     # Create VisualElement
                     visual_elem = VisualElement(
-                    element_type=VisualElementType.IMAGE,
+                        element_type=VisualElementType.IMAGE,
                         source_format=DocumentType.PDF,
                         content_hash=VisualElement.create_hash(str(image).encode()),
                         page_or_slide=page_data.page_number,
+                        bounding_box=bbox,  # Add bbox
                         vlm_description=getattr(image, 'description', None),
                         analysis_metadata={
                             "caption": getattr(image, 'caption', None),
@@ -301,26 +415,26 @@ class HybridPDFParser(BaseParser):
                     
                     # Add reference to main segment
                     segment.visual_references.append(visual_elem.content_hash)
-        
-            # Process formulas
-            if self.config.get('extract_formulas', True) and hasattr(page_data, 'formulas'):
-                for formula in page_data.formulas:
-                    # Create VisualElement
-                    visual_elem = VisualElement(
-                    element_type=VisualElementType.FORMULA,
-                        source_format=DocumentType.PDF,
-                        content_hash=VisualElement.create_hash(str(formula).encode()),
-                        page_or_slide=page_data.page_number,
-                        extracted_data={
-                            "latex": getattr(formula, 'latex', None),
-                            "mathml": getattr(formula, 'mathml', None)
-                        },
-                        vlm_description=getattr(formula, 'description', None)
-                    )
-                    visual_elements.append(visual_elem)
-                    
-                    # Add reference to main segment
-                    segment.visual_references.append(visual_elem.content_hash)
+                
+                # Process formulas (legacy format)
+                if self.config.get('extract_formulas', True) and hasattr(page_data, 'formulas'):
+                    for formula in page_data.formulas:
+                        # Create VisualElement
+                        visual_elem = VisualElement(
+                            element_type=VisualElementType.FORMULA,
+                            source_format=DocumentType.PDF,
+                            content_hash=VisualElement.create_hash(str(formula).encode()),
+                            page_or_slide=page_data.page_number,
+                            extracted_data={
+                                "latex": getattr(formula, 'latex', None),
+                                "mathml": getattr(formula, 'mathml', None)
+                            },
+                            vlm_description=getattr(formula, 'description', None)
+                        )
+                        visual_elements.append(visual_elem)
+                        
+                        # Add reference to main segment
+                        segment.visual_references.append(visual_elem.content_hash)
             
             return segment, visual_elements
         except Exception as e:
@@ -362,7 +476,7 @@ class HybridPDFParser(BaseParser):
                             return TextSubtype.TITLE.value
         
             # Check for list patterns
-            if content.startswith(('• ', '- ', '* ', '○ ')) or any(content.startswith(f"{i}.") for i in range(1, 20)):
+            if "[LIST]" in content or content.startswith(('• ', '- ', '* ', '○ ')) or any(content.startswith(f"{i}.") for i in range(1, 20)):
                 return TextSubtype.LIST.value
             
             # Check for code blocks (indented text)

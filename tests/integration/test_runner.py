@@ -18,8 +18,7 @@ sys.path.insert(0, str(project_root))
 from core.config import Config, get_config
 from core.content_chunker import ContentChunker
 from core.batch_processor import BatchProcessor
-from plugins.parsers.parser_factory import ParserFactory
-from plugins.parsers.base_parser import Document, DocumentMetadata, DocumentType, Segment
+from core.parsers import ParserFactory, Document, DocumentMetadata, DocumentType, Segment
 
 
 class TestResult:

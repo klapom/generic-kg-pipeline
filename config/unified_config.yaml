@@ -1,0 +1,22 @@
+profile: dev
+
+services:
+  vllm:
+    url: http://localhost:8000
+    timeout: 300
+    health_check_enabled: true
+    retry_attempts: 3
+    
+  hochschul_llm:
+    url: http://localhost:8001
+    timeout: 60
+    
+parsing:
+  pdf:
+    provider: hybrid
+    
+chunking:
+  default:
+    strategy: semantic
+    chunk_size: 1000
+    chunk_overlap: 200

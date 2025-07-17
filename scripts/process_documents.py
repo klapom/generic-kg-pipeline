@@ -22,8 +22,7 @@ sys.path.insert(0, str(project_root))
 from core.config_new.unified_manager import get_config
 from core.content_chunker import ContentChunker
 from core.vllm_batch_processor import VLLMBatchProcessor, BatchProcessingConfig, run_vllm_batch_processing
-from plugins.parsers.parser_factory import ParserFactory
-from plugins.parsers.base_parser import Document
+from core.parsers import ParserFactory, Document
 
 
 class DocumentProcessor:
@@ -60,7 +59,7 @@ class DocumentProcessor:
             
             if mock_mode:
                 # Create mock document for testing without external services
-                from plugins.parsers.base_parser import DocumentMetadata, DocumentType, Segment
+                from core.parsers import DocumentMetadata, DocumentType, Segment
                 
                 metadata = DocumentMetadata(
                     title=file_path.stem,

@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 from core.parsers.advanced_pdf_extractor import AdvancedPDFExtractor
-from plugins.parsers.base_parser import Segment
+from core.parsers import Segment
 import sys
 
 # Setup file logging

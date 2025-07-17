@@ -14,7 +14,8 @@ from .data_models import (
     MetadataSubtype,
     VisualElement,
     VisualElementType,
-    ParseError
+    ParseError,
+    VisualAnalysisResult
 )
 
 from .base_parser import BaseParser
@@ -34,6 +35,7 @@ __all__ = [
     'VisualElement',
     'VisualElementType',
     'ParseError',
+    'VisualAnalysisResult',
     
     # Interfaces
     'BaseParser',

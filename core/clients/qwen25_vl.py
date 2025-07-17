@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from core.clients.base import BaseModelClient, BatchProcessingMixin
 from core.config_new.unified_manager import get_config
-from plugins.parsers.base_parser import VisualElementType
+from core.parsers import VisualElementType
 
 logger = logging.getLogger(__name__)
 
