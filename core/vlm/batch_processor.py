@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing as mp
 from dataclasses import dataclass, field
 
-from core.parsers.hybrid_pdf_parser import HybridPDFParser
+# from core.parsers.hybrid_pdf_parser import HybridPDFParser  # Commented to avoid circular import
 from core.vlm.two_stage_processor import TwoStageVLMProcessor
 from core.parsers.interfaces.data_models import VisualElement
 

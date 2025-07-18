@@ -1,0 +1,16 @@
+{
+  "pdf_file": "/home/bot3/gendocpipe/generic-kg-pipeline/data/input/test_simple.pdf",
+  "timestamp": "20250718_081354",
+  "without_vlm": {
+    "total_segments": 1,
+    "total_visual_elements": 0,
+    "visual_element_types": [],
+    "visual_elements": []
+  },
+  "with_vlm": {
+    "total_segments": 1,
+    "total_visual_elements": 0,
+    "vlm_analyzed": 0,
+    "visual_elements": []
+  }
+}
