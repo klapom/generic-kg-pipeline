@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 import json
+import re
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))

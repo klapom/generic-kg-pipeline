@@ -34,10 +34,10 @@ class ParserFactory:
         
         # Load parsers dynamically to avoid circular imports
         try:
-            from .implementations.pdf import PDFParser
-            self._parsers[DocumentType.PDF] = PDFParser
+            from .implementations.pdf import HybridPDFParser
+            self._parsers[DocumentType.PDF] = HybridPDFParser
         except ImportError:
-            logger.warning("PDFParser not available")
+            logger.warning("HybridPDFParser not available")
             
         try:
             from .implementations.text import TXTParser

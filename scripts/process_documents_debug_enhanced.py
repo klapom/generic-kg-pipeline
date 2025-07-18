@@ -27,7 +27,6 @@ sys.path.insert(0, str(project_root))
 
 from core.parsers import ParserFactory, Document
 from core.parsers.interfaces.data_models import VisualElement
-from core.parsers.implementations.pdf import HybridPDFParser
 from core.content_chunker import ContentChunker
 from core.pipeline_debugger_enhanced import (
     EnhancedPipelineDebugger, PipelineDebugConfig, DebugLevel
@@ -133,14 +132,12 @@ class EnhancedDebugDocumentProcessor:
             logger.info(f"📄 Stage 1: Parsing {file_path.name} with SmolDocling")
             start_time = time.time()
             
-            # Use HybridPDFParser for PDFs to get SmolDocling content
+            # Use parser factory for all file types
+            # Note: HybridPDFParser (now default for PDFs) already uses SmolDocling internally
+            parser = self.parser_factory.get_parser_for_file(file_path)
             smoldocling_result = None
             if file_path.suffix.lower() == '.pdf':
-                # HybridPDFParser already uses SmolDocling internally
-                parser = HybridPDFParser(enable_vlm=False)
                 logger.info("   📑 Using HybridPDFParser with local vLLM SmolDocling")
-            else:
-                parser = self.parser_factory.get_parser_for_file(file_path)
             
             document = await parser.parse(file_path)
             

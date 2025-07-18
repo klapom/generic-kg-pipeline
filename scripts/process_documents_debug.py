@@ -73,12 +73,8 @@ class DebugDocumentProcessor:
             logger.info(f"📄 Stage 1: Parsing {file_path.name}")
             start_time = time.time()
             
-            # Use HybridPDFParser for PDFs to enable local SmolDocling
-            if file_path.suffix.lower() == '.pdf':
-                from core.parsers.implementations.pdf import HybridPDFParser
-                parser = HybridPDFParser(enable_vlm=False)  # VLM handled separately
-            else:
-                parser = self.parser_factory.get_parser_for_file(file_path)
+            # Use parser factory for all file types
+            parser = self.parser_factory.get_parser_for_file(file_path)
             
             document = await parser.parse(file_path)
             

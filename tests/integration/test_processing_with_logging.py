@@ -14,7 +14,7 @@ from datetime import datetime
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from core.config import get_config
+from core.config_new.unified_manager import get_config
 from core.content_chunker import ContentChunker
 from core.parsers import ParserFactory, DocumentType
 

@@ -453,15 +453,3 @@ def reload_config() -> None:
     """Lade Konfiguration neu"""
     get_config_manager().reload()
 
-
-# Kompatibilitäts-Layer für alte Config
-def get_legacy_config() -> Dict[str, Any]:
-    """Backward compatibility für alten Code"""
-    manager = get_config_manager()
-    return {
-        'domain': manager.config.domain.dict(),
-        'parsing': manager.config.parsing.dict(),
-        'llm': manager.config.models.llm.dict(),
-        'storage': manager.config.storage.dict(),
-        # ... weitere Mappings
-    }

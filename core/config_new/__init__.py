@@ -6,8 +6,7 @@ from .unified_manager import (
     UnifiedConfig,
     get_config as get_unified_config,
     get_config_manager,
-    reload_config,
-    get_legacy_config
+    reload_config
 )
 
 __all__ = [
@@ -15,6 +14,5 @@ __all__ = [
     'UnifiedConfig',
     'get_unified_config',
     'get_config_manager',
-    'reload_config',
-    'get_legacy_config'
+    'reload_config'
 ]

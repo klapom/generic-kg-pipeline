@@ -637,11 +637,11 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
     
     def _format_table(self, data) -> str:
         """Convert table to text"""
-        if hasattr(element, 'to_markdown'):
-            return element.to_markdown()
-        elif hasattr(element, 'to_text'):
-            return element.to_text()
-        return str(element)
+        if hasattr(data, 'to_markdown'):
+            return data.to_markdown()
+        elif hasattr(data, 'to_text'):
+            return data.to_text()
+        return str(data)
     
     def _ensure_model_loaded(self):
         """Ensure vLLM model is loaded"""
@@ -774,13 +774,25 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
         
         # If we detected line-based repetition, truncate
         if truncate_at is not None:
-            logger.info(f"Truncating DocTags output at line {truncate_at} due to repetition bug")
+            logger.warning(f"Truncating DocTags output at line {truncate_at} due to repetition bug")
             lines = lines[:truncate_at]
             
-            # Try to close any open tags
+            # Check if we have enough content before the repetition
             doctags_truncated = '\n'.join(lines)
             
-            # Find open tags that need closing
+            # Count meaningful tags (exclude positioning tags)
+            meaningful_tags = re.findall(r'<(text|paragraph|section_header|title|caption|table|picture|formula|code)>', doctags_truncated)
+            
+            if len(meaningful_tags) < 2:  # Too little content before repetition
+                error_msg = (
+                    f"SmolDocling repetition bug detected too early (line {truncate_at}). "
+                    f"Only {len(meaningful_tags)} meaningful tags found before repetition. "
+                    "Page cannot be parsed reliably."
+                )
+                logger.error(error_msg)
+                raise ParseError(error_msg)
+            
+            # Try to close any open tags
             open_tags = []
             for match in re.finditer(r'<(\w+)>', doctags_truncated):
                 tag = match.group(1)
@@ -795,6 +807,9 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
             # Add closing tags
             for tag in reversed(open_tags):
                 doctags_truncated += f'\n</{tag}>'
+            
+            # Add warning tag for debugging
+            doctags_truncated += '\n<!-- WARNING: Output truncated due to SmolDocling repetition bug -->'
             
             return doctags_truncated
         

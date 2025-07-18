@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from core.clients.vllm_smoldocling import VLLMSmolDoclingClient, SmolDoclingConfig
+from core.clients import VLLMSmolDoclingFinalClient as VLLMSmolDoclingClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,17 +15,8 @@ async def parse_single_pdf_example():
     """Example: Parse a single PDF with vLLM SmolDocling"""
     print("=== Single PDF Parsing Example ===")
     
-    # Create custom configuration
-    config = SmolDoclingConfig(
-        max_pages=10,
-        extract_tables=True,
-        extract_images=True,
-        extract_formulas=True,
-        preserve_layout=True,
-        output_format="structured",
-        gpu_optimization=True,
-        timeout_seconds=120
-    )
+    # Configuration is now passed directly to the client
+    # The client handles all necessary settings internally
     
     # Path to your PDF file
     pdf_path = Path("path/to/your/document.pdf")
@@ -36,11 +27,13 @@ async def parse_single_pdf_example():
         return
     
     try:
-        async with VLLMSmolDoclingClient(config) as client:
-            print(f"📄 Parsing PDF: {pdf_path.name}")
-            
-            # Parse the PDF
-            result = await client.parse_pdf(pdf_path)
+        # Create client instance
+        client = VLLMSmolDoclingClient()
+        
+        print(f"📄 Parsing PDF: {pdf_path.name}")
+        
+        # Parse the PDF
+        result = client.parse_pdf(pdf_path)
             
             if result.success:
                 print(f"✅ Parsing successful!")
