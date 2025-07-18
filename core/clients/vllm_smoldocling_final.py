@@ -49,7 +49,7 @@ class SmolDoclingResult:
     total_pages: int
     success: bool
     error_message: Optional[str] = None
-    extraction_method: str = "legacy"  # legacy or docling
+    extraction_method: str = "docling"  # docling only, no legacy fallback
 
 
 class VLLMSmolDoclingFinalClient(BaseVLLMClient):
@@ -85,7 +85,7 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
         # Configuration-driven settings
         self.use_docling = self.config["use_docling"]
         self.extract_images_directly = self.config["extract_images_directly"]
-        self.fallback_to_legacy = self.config["fallback_to_legacy"]
+        # Legacy fallback removed - always use docling
         self.log_performance = self.config["log_performance"]
         
         # Import required classes for vLLM
@@ -120,7 +120,7 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
         if self.use_docling:
             self._docling_available = self._check_docling()
             if not self._docling_available:
-                logger.warning("Docling not available, using legacy parser")
+                logger.error("Docling not available, cannot proceed with parsing")
                 self.use_docling = False
     
     def _check_docling(self) -> bool:
@@ -162,7 +162,7 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
         max_size = self.config["memory_limits"]["max_pdf_size_mb"]
         
         if file_size_mb > max_size:
-            logger.warning(f"PDF too large ({file_size_mb:.1f}MB > {max_size}MB), using legacy parser")
+            logger.warning(f"PDF too large ({file_size_mb:.1f}MB > {max_size}MB), skipping docling extraction")
             should_use_docling = False
         
         # Decide which method to use
@@ -174,8 +174,8 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
                 logger.info("Using docling with deferred image extraction") 
                 result = self._parse_with_docling_deferred(pdf_path)
             else:
-                logger.info("Using legacy parser")
-                result = self._parse_legacy(pdf_path)
+                logger.info("Processing without docling extraction")
+                # Process with basic SmolDocling only
             
             # Performance logging
             if self.log_performance:
@@ -189,9 +189,9 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
             return result
             
         except Exception as e:
-            if self.fallback_to_legacy and should_use_docling:
-                logger.error(f"Docling parsing failed: {e}, falling back to legacy")
-                return self._parse_legacy(pdf_path)
+            if should_use_docling:
+                logger.error(f"Docling parsing failed: {e}")
+                # Re-raise the error - no fallback
             else:
                 raise
     
@@ -316,9 +316,9 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
             if hasattr(locals(), 'pdf_doc'):
                 pdf_doc.close()
             
-            # Fallback to legacy
-            logger.info("Falling back to legacy parser")
-            return self._parse_legacy(pdf_path)
+            # No fallback - raise error
+            logger.error("SmolDocling parsing failed")
+            raise ParseError(f"Failed to parse {pdf_path.name}: {str(e)}")
     
     def _generate_doctags(self, page_image) -> str:
         """Generate DocTags for a page using vLLM"""
@@ -652,10 +652,7 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
                 self.model_config
             )
     
-    def _parse_legacy(self, pdf_path: Path) -> SmolDoclingResult:
-        """Direct parsing without docling fallback"""
-        # No legacy fallback - raise error if docling parsing fails
-        raise ParseError(f"SmolDocling parsing failed for {pdf_path.name}. No legacy fallback available.")
+    # Legacy parsing method removed - no fallback available
     
     def parse_model_output(self, output: Any) -> Dict[str, Any]:
         """

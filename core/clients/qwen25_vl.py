@@ -316,14 +316,13 @@ class Qwen25VLClient(BaseModelClient[VisualAnalysisRequest, VisualAnalysisResult
         
         return type_mapping.get(detected_type)
     
-    # Convenience methods for backward compatibility
     async def analyze_visual(self,
                            image_data: bytes,
                            document_context: Optional[Dict[str, Any]] = None,
                            element_type: Optional[VisualElementType] = None,
                            analysis_focus: str = "comprehensive") -> VisualAnalysisResult:
         """
-        Analyze a visual element (backward compatibility)
+        Analyze a visual element
         
         Args:
             image_data: Raw image bytes

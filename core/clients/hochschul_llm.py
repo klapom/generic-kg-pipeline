@@ -109,7 +109,7 @@ class HochschulLLMClient(BaseModelClient[ExtractionRequest, ExtractionResult, Tr
     """
     
     def __init__(self, config: Optional[TripleExtractionConfig] = None):
-        """Initialize with backward compatibility"""
+        """Initialize Hochschul LLM client"""
         # OpenAI client needs special handling
         self._openai_client = None
         super().__init__("hochschul_llm", config=config)
@@ -277,13 +277,12 @@ Rules:
         
         return base_prompt
     
-    # Convenience methods for backward compatibility
     async def extract_triples(self, 
                             text: str,
                             prompt_template: Optional[str] = None,
                             ontology_context: Optional[str] = None) -> ExtractionResult:
         """
-        Extract triples from text (backward compatibility)
+        Extract triples from text
         
         Args:
             text: Source text
