@@ -34,10 +34,26 @@ class ParserFactory:
         
         # Load parsers dynamically to avoid circular imports
         try:
-            from .implementations.pdf import HybridPDFParser
-            self._parsers[DocumentType.PDF] = HybridPDFParser
-        except ImportError:
-            logger.warning("HybridPDFParser not available")
+            # Check if we should use the new PDF processor architecture
+            use_new_pdf_processor = self.config.get('use_new_pdf_processor', True)
+            use_image_extraction = self.config.get('use_image_extraction_parser', False)
+            
+            if use_new_pdf_processor:
+                from .implementations.pdf import PDFProcessor
+                self._parsers[DocumentType.PDF] = PDFProcessor
+                logger.info("Using new PDFProcessor architecture")
+            elif use_image_extraction:
+                # Legacy option for backward compatibility
+                from .implementations.pdf import ImageExtractionPDFParser
+                self._parsers[DocumentType.PDF] = ImageExtractionPDFParser
+                logger.info("Using ImageExtractionPDFParser for visual element extraction")
+            else:
+                # Legacy option for backward compatibility
+                from .implementations.pdf import HybridPDFParser
+                self._parsers[DocumentType.PDF] = HybridPDFParser
+                logger.info("Using standard HybridPDFParser")
+        except ImportError as e:
+            logger.warning(f"PDF Parser not available: {e}")
             
         try:
             from .implementations.text import TXTParser
@@ -195,7 +211,12 @@ class ParserFactory:
             logger.info(f"Parsing {file_path.name} with {type(parser).__name__}")
             
             # Parse the document
-            document = await parser.parse(file_path)
+            # Check if parser has async parse method
+            if hasattr(parser, 'parse_async'):
+                document = await parser.parse_async(file_path)
+            else:
+                # Fall back to sync parse for legacy parsers
+                document = parser.parse(file_path)
             
             logger.info(f"Successfully parsed {file_path.name}: "
                        f"{document.total_segments} segments, "

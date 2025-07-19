@@ -29,13 +29,15 @@ class VisualAnalysisResult:
                  structured_data: Optional[Dict[str, Any]] = None,
                  confidence: Optional[float] = None,
                  ocr_text: Optional[str] = None,
-                 error_message: Optional[str] = None):
+                 error_message: Optional[str] = None,
+                 processing_time: Optional[float] = None):
         self.success = success
         self.description = description
         self.structured_data = structured_data
         self.confidence = confidence
         self.ocr_text = ocr_text
         self.error_message = error_message
+        self.processing_time = processing_time or 0.0
 
 
 class PageContext:
@@ -304,6 +306,78 @@ If the table contains structured data, format your response as JSON."""
                 extracted[key] = matches if len(matches) > 1 else matches[0]
         
         return extracted if extracted else None
+    
+    async def analyze_image(self, 
+                           image_path: str,
+                           prompt: Optional[str] = None) -> VisualAnalysisResult:
+        """
+        Analyze an image from file path
+        
+        Args:
+            image_path: Path to the image file
+            prompt: Optional custom prompt
+            
+        Returns:
+            VisualAnalysisResult
+        """
+        try:
+            # Track processing time
+            import time
+            start_time = time.time()
+            
+            # Load image data
+            from pathlib import Path
+            image_file = Path(image_path)
+            if not image_file.exists():
+                return VisualAnalysisResult(
+                    success=False,
+                    error_message=f"Image file not found: {image_path}"
+                )
+            
+            # Read image data
+            with open(image_file, 'rb') as f:
+                image_data = f.read()
+            
+            # Create temporary visual element
+            # Import from correct location
+            from ..parsers.interfaces.data_models import DocumentType
+            
+            temp_element = VisualElement(
+                element_type=VisualElementType.IMAGE,
+                source_format=DocumentType.UNKNOWN,
+                content_hash=image_file.name,
+                raw_data=image_data
+            )
+            
+            # If custom prompt provided, create a modified analyze method
+            if prompt:
+                # Store original build_prompt method
+                original_build_prompt = self._build_prompt
+                
+                # Replace with custom prompt
+                self._build_prompt = lambda ve, pc: prompt
+                
+                try:
+                    # Analyze with custom prompt
+                    result = await self._analyze_visual_element(temp_element)
+                finally:
+                    # Restore original method
+                    self._build_prompt = original_build_prompt
+            else:
+                # Use default analysis
+                result = await self._analyze_visual_element(temp_element)
+            
+            # Add processing time
+            result.processing_time = time.time() - start_time
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing image {image_path}: {e}")
+            return VisualAnalysisResult(
+                success=False,
+                error_message=str(e)
+            )
     
     async def analyze_page_context(self, 
                                  page_image: bytes,

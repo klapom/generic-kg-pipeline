@@ -20,6 +20,7 @@ from core.parsers.implementations.pdf.extractors.pdfplumber_extractor import PDF
 from core.parsers.strategies.table_text_separator import TableTextSeparator, clean_page_content
 from core.vlm.qwen25_processor import Qwen25VLMProcessor, PageContext
 from core.vlm.image_extraction import ImageExtractionStrategy
+from core.parsers.utils.content_detector import ContentDetector
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,9 @@ class HybridPDFParserQwen25(BaseParser):
         self.fallback_threshold = config.get('fallback_confidence_threshold', 0.8) if config else 0.8
         self.separate_tables = config.get('separate_tables', True) if config else True
         
+        # Content detection config (for table/chart detection)
+        self.enable_content_detection = config.get('enable_content_detection', True) if config else True
+        
         # pdfplumber mode: 0=never, 1=fallback only, 2=always parallel
         self.pdfplumber_mode = config.get('pdfplumber_mode', 1) if config else 1
         
@@ -116,7 +120,8 @@ class HybridPDFParserQwen25(BaseParser):
         
         logger.info(f"Initialized HybridPDFParserQwen25 with pdfplumber_mode={self.pdfplumber_mode} "
                    f"(0=never, 1=fallback, 2=parallel), VLM={enable_vlm}, "
-                   f"page_context={self.enable_page_context}")
+                   f"page_context={self.enable_page_context}, "
+                   f"content_detection={self.enable_content_detection}")
     
     async def parse(self, file_path: Path) -> Document:
         """Parse PDF using hybrid approach with enhanced VLM support"""
@@ -450,13 +455,30 @@ class HybridPDFParserQwen25(BaseParser):
         return segments, []  # pdfplumber doesn't extract visual elements
     
     def _post_process_segments(self, segments: List[Segment]) -> List[Segment]:
-        """Post-process segments for quality improvement"""
+        """Post-process segments for quality improvement and optional content detection"""
         processed = []
         
         for segment in segments:
             # Clean content
             if segment.content and segment.content.strip():
-                processed.append(segment)
+                # Only enhance with ContentDetector if enabled
+                if self.enable_content_detection:
+                    # Enhance segment with detected content type and structure
+                    enhanced_segment = ContentDetector.enhance_segment_with_structure(segment)
+                    
+                    # Log if we detected special content
+                    if enhanced_segment.segment_type == SegmentType.TABLE:
+                        logger.info(f"📊 Detected table in segment {enhanced_segment.segment_index} on page {enhanced_segment.page_number}")
+                        if 'table_structure' in enhanced_segment.metadata:
+                            triple_count = enhanced_segment.metadata.get('triple_count', 0)
+                            logger.info(f"   - Extracted {triple_count} potential triples")
+                    elif enhanced_segment.segment_type == SegmentType.VISUAL and enhanced_segment.segment_subtype == VisualSubtype.CHART:
+                        logger.info(f"📈 Detected chart reference in segment {enhanced_segment.segment_index}")
+                    
+                    processed.append(enhanced_segment)
+                else:
+                    # Skip content detection, just add the segment
+                    processed.append(segment)
         
         return processed
     

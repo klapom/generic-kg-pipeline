@@ -92,18 +92,7 @@ def get_config(environment: str = "development") -> dict:
     
     return config
 
-# Environment-specific overrides
-DEVELOPMENT_OVERRIDES = {
-    # Conservative settings for development
-    "use_docling": False,
-    "rollout_percentage": 0
-}
-
-PRODUCTION_OVERRIDES = {
-    # Full rollout in production
-    "use_docling": True,
-    "rollout_percentage": 100
-}
+# Remove duplicate overrides - already defined above
 
 def is_docling_enabled(environment: str = "development") -> bool:
     """Check if docling is enabled for current environment"""

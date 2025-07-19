@@ -16,7 +16,7 @@ from core.parsers.interfaces.data_models import (
     VisualElement, VisualElementType, Segment, 
     SegmentType, VisualSubtype
 )
-from core.clients.vllm_qwen25_vl_local import VLLMQwen25VLClient, VisualAnalysisResult
+from core.vlm.qwen25_processor import Qwen25VLMProcessor, VisualAnalysisResult
 from core.clients.vllm_llama32_vision_local import VLLMLlama32VisionClient
 
 
@@ -43,10 +43,11 @@ class VLMComparison:
         self.model_results[model_name] = {
             "description": result.description,
             "confidence": result.confidence,
-            "visual_subtype": result.visual_subtype,
+            "visual_subtype": getattr(result, 'visual_subtype', None),
             "processing_time_seconds": processing_time,
-            "detected_elements": result.detected_elements,
-            "extracted_text": result.extracted_text
+            "detected_elements": getattr(result, 'detected_elements', None),
+            "extracted_text": getattr(result, 'extracted_text', None),
+            "structured_data": getattr(result, 'structured_data', None)
         }
     
     def calculate_consensus(self) -> Dict[str, Any]:
@@ -259,22 +260,14 @@ class MultiVLMIntegration:
                 
                 # Initialize model based on type
                 if model_type == VLMModelType.QWEN25_VL_7B:
-                    try:
-                        # Try vLLM first
-                        client = VLLMQwen25VLClient(
-                            gpu_memory_utilization=0.7,  # Use more GPU memory since only one model at a time
-                            max_image_size=1024,
-                            batch_size=2,
-                            auto_load=True
-                        )
-                    except Exception as e:
-                        logger.warning(f"vLLM failed for Qwen2.5-VL, falling back to Transformers: {e}")
-                        # Fallback to Transformers
-                        from core.clients.transformers_qwen25_vl_client import TransformersQwen25VLClient
-                        client = TransformersQwen25VLClient(
-                            temperature=0.1,
-                            max_new_tokens=1024
-                        )
+                    # Use the new Qwen25VLMProcessor
+                    config = {
+                        'temperature': 0.1,
+                        'max_new_tokens': 1024,
+                        'batch_size': 2,
+                        'enable_structured_parsing': True
+                    }
+                    client = Qwen25VLMProcessor(config)
                 elif model_type == VLMModelType.LLAMA32_VISION_11B:
                     client = VLLMLlama32VisionClient(
                         gpu_memory_utilization=0.8,  # Llama needs more memory
@@ -311,13 +304,22 @@ class MultiVLMIntegration:
                 logger.info(f"Analyzing element with {model_type.value}...")
                 
                 # Analyze with current model
-                analysis_result = await asyncio.to_thread(
-                    client.analyze_visual,
-                    image_data=visual_element.raw_data,
-                    document_context=prompt_config['context'],
-                    element_type=visual_element.element_type,
-                    analysis_focus=prompt_config['analysis_focus']
-                )
+                if isinstance(client, Qwen25VLMProcessor):
+                    # Use the new processor interface
+                    results = await client.process_visual_elements(
+                        [visual_element],
+                        analysis_focus=prompt_config['analysis_focus']
+                    )
+                    analysis_result = results[0] if results else None
+                else:
+                    # Use the old interface for other clients
+                    analysis_result = await asyncio.to_thread(
+                        client.analyze_visual,
+                        image_data=visual_element.raw_data,
+                        document_context=prompt_config['context'],
+                        element_type=visual_element.element_type,
+                        analysis_focus=prompt_config['analysis_focus']
+                    )
                 
                 processing_time = (datetime.now() - start_time).total_seconds()
                 
@@ -394,27 +396,29 @@ class VLMIntegration:
     Handles VLM integration for visual element analysis
     """
     
-    def __init__(self, vlm_client: Optional[VLLMQwen25VLClient] = None):
+    def __init__(self, vlm_processor: Optional[Qwen25VLMProcessor] = None):
         """
         Initialize VLM integration
         
         Args:
-            vlm_client: Optional pre-initialized VLM client
+            vlm_processor: Optional pre-initialized VLM processor
         """
-        self.vlm_client = vlm_client
+        self.vlm_processor = vlm_processor
         self.prompt_generator = AdaptivePromptGenerator()
         self._initialized = False
         
     def _ensure_initialized(self):
-        """Ensure VLM client is initialized"""
-        if not self._initialized and self.vlm_client is None:
-            logger.info("Initializing VLLMQwen25VLClient...")
-            self.vlm_client = VLLMQwen25VLClient(
-                gpu_memory_utilization=0.5,  # Conservative for multi-model setup
-                max_image_size=1024,
-                batch_size=4,
-                auto_load=True
-            )
+        """Ensure VLM processor is initialized"""
+        if not self._initialized and self.vlm_processor is None:
+            logger.info("Initializing Qwen25VLMProcessor...")
+            # Use default config for Qwen2.5-VL
+            config = {
+                'temperature': 0.2,
+                'max_new_tokens': 512,
+                'batch_size': 4,
+                'enable_structured_parsing': True
+            }
+            self.vlm_processor = Qwen25VLMProcessor(config)
             self._initialized = True
     
     async def analyze_visual_elements(
@@ -455,23 +459,34 @@ class VLMIntegration:
                 # Analyze with VLM
                 logger.info(f"Analyzing {element.element_type.value} with focus: {prompt_config['analysis_focus']}")
                 
-                analysis_result = await asyncio.to_thread(
-                    self.vlm_client.analyze_visual,
-                    image_data=element.raw_data,
-                    document_context=prompt_config['context'],
-                    element_type=element.element_type,
+                # Process single element
+                results = await self.vlm_processor.process_visual_elements(
+                    [element],
                     analysis_focus=prompt_config['analysis_focus']
                 )
+                
+                # Get the result for our single element
+                if results and len(results) > 0:
+                    analysis_result = results[0]
+                else:
+                    raise ValueError("No analysis result returned")
                 
                 # Update element with results
                 element.vlm_description = analysis_result.description
                 element.confidence = analysis_result.confidence
-                element.extracted_data = analysis_result.extracted_data
+                
+                # Handle structured data if available
+                if hasattr(analysis_result, 'structured_data') and analysis_result.structured_data:
+                    element.extracted_data = analysis_result.structured_data
                 
                 # Merge analysis metadata
                 if element.analysis_metadata is None:
                     element.analysis_metadata = {}
-                element.analysis_metadata.update(analysis_result.metadata or {})
+                
+                # Add metadata from result
+                if hasattr(analysis_result, 'metadata') and analysis_result.metadata:
+                    element.analysis_metadata.update(analysis_result.metadata)
+                
                 element.analysis_metadata['analysis_focus'] = prompt_config['analysis_focus']
                 element.analysis_metadata['analysis_timestamp'] = datetime.now().isoformat()
                 

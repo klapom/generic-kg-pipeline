@@ -176,6 +176,7 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
             else:
                 logger.info("Processing without docling extraction")
                 # Process with basic SmolDocling only
+                result = self._parse_with_basic_smoldocling(pdf_path)
             
             # Performance logging
             if self.log_performance:
@@ -636,12 +637,84 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
         return str(element)
     
     def _format_table(self, data) -> str:
-        """Convert table to text"""
+        """Convert table to text/markdown format"""
         if hasattr(data, 'to_markdown'):
             return data.to_markdown()
         elif hasattr(data, 'to_text'):
             return data.to_text()
-        return str(data)
+        
+        # Handle docling table format
+        data_str = str(data)
+        if 'TableCell' in data_str:
+            try:
+                # Parse docling table format
+                from parse_docling_tables import format_docling_table
+                return format_docling_table(data_str, 'markdown')
+            except ImportError:
+                # Fallback to parsing inline
+                return self._parse_docling_table_inline(data_str)
+        
+        return data_str
+    
+    def _parse_docling_table_inline(self, table_str: str) -> str:
+        """Parse docling table format inline (fallback)"""
+        import re
+        
+        # Extract cells
+        cells = []
+        parts = table_str.split('TableCell(')
+        
+        for part in parts[1:]:
+            # Find closing parenthesis
+            paren_count = 1
+            idx = 0
+            while idx < len(part) and paren_count > 0:
+                if part[idx] == '(':
+                    paren_count += 1
+                elif part[idx] == ')':
+                    paren_count -= 1
+                idx += 1
+            
+            if idx > 0:
+                cell_content = part[:idx-1]
+                
+                # Parse text and indices
+                text_match = re.search(r"text='([^']*)'", cell_content)
+                if not text_match:
+                    text_match = re.search(r'text="([^"]*)"', cell_content)
+                
+                row_match = re.search(r'start_row_offset_idx=(\d+)', cell_content)
+                col_match = re.search(r'start_col_offset_idx=(\d+)', cell_content)
+                
+                if text_match and row_match and col_match:
+                    cells.append({
+                        'text': text_match.group(1),
+                        'row': int(row_match.group(1)),
+                        'col': int(col_match.group(1))
+                    })
+        
+        if not cells:
+            return table_str
+        
+        # Build grid
+        max_row = max(cell['row'] for cell in cells)
+        max_col = max(cell['col'] for cell in cells)
+        
+        grid = [['' for _ in range(max_col + 1)] for _ in range(max_row + 1)]
+        
+        for cell in cells:
+            grid[cell['row']][cell['col']] = cell['text']
+        
+        # Convert to markdown
+        lines = []
+        for i, row in enumerate(grid):
+            line = '| ' + ' | '.join(cell for cell in row) + ' |'
+            lines.append(line)
+            if i == 0:  # Add separator after header
+                separator = '|' + '|'.join([' --- ' for _ in row]) + '|'
+                lines.append(separator)
+        
+        return '\n'.join(lines)
     
     def _ensure_model_loaded(self):
         """Ensure vLLM model is loaded"""
@@ -652,7 +725,89 @@ class VLLMSmolDoclingFinalClient(BaseVLLMClient):
                 self.model_config
             )
     
-    # Legacy parsing method removed - no fallback available
+    def _parse_with_basic_smoldocling(self, pdf_path: Path) -> SmolDoclingResult:
+        """
+        Basic parsing without docling - uses PyMuPDF for text extraction
+        """
+        start_time = time.time()
+        logger.info(f"Basic SmolDocling parsing for {pdf_path.name} using PyMuPDF")
+        
+        pages = []
+        
+        try:
+            # Use PyMuPDF for basic text extraction
+            import fitz
+            pdf_doc = fitz.open(str(pdf_path))
+            
+            # Process pages
+            pages_to_process = min(len(pdf_doc), self.max_pages)
+            
+            for page_num in range(pages_to_process):
+                page = pdf_doc[page_num]
+                
+                # Extract text
+                text = page.get_text()
+                
+                # Extract tables using PyMuPDF's table detection
+                tables = []
+                try:
+                    # PyMuPDF can detect tables
+                    page_tables = page.find_tables()
+                    for table in page_tables:
+                        table_data = {
+                            'bbox': table.bbox,
+                            'rows': table.extract(),
+                            'text': '\n'.join([' | '.join(row) for row in table.extract() if row])
+                        }
+                        tables.append(table_data)
+                except:
+                    # Table extraction might not be available in all PyMuPDF versions
+                    pass
+                
+                # Create page data
+                page_data = SmolDoclingPage(
+                    page_number=page_num + 1,
+                    text=text,
+                    tables=tables,
+                    images=[],  # Images handled separately by ImageAnalyzer
+                    formulas=[],
+                    visual_elements=[],
+                    confidence_score=0.8  # Fixed confidence for basic parsing
+                )
+                
+                pages.append(page_data)
+            
+            pdf_doc.close()
+            
+            return SmolDoclingResult(
+                pages=pages,
+                visual_elements=[],  # Visual elements handled by ImageAnalyzer
+                metadata={
+                    "parser": "basic_smoldocling",
+                    "page_count": len(pages),
+                    "extraction_method": "pymupdf"
+                },
+                processing_time_seconds=time.time() - start_time,
+                model_version="smoldocling-basic-pymupdf",
+                total_pages=len(pages),
+                success=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Basic SmolDocling parsing failed: {e}")
+            return SmolDoclingResult(
+                pages=[],
+                visual_elements=[],
+                metadata={
+                    "parser": "basic_smoldocling",
+                    "error": str(e)
+                },
+                processing_time_seconds=time.time() - start_time,
+                model_version="smoldocling-basic",
+                total_pages=0,
+                success=False,
+                error_message=str(e)
+            )
     
     def parse_model_output(self, output: Any) -> Dict[str, Any]:
         """
