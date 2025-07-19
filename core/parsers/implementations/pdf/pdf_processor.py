@@ -14,6 +14,7 @@ from core.parsers.interfaces.data_models import Document, DocumentType, Segment
 from .pdf_preprocessor import PDFPreprocessor
 from .base_pdf_parser import BasePDFParser
 from .image_analyzer import ImageAnalyzer, AnalysisMode
+from core.parsers.utils.segment_context_enhancer import SegmentContextEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class PDFProcessor(BaseParser):
         self.enable_preprocessing = self.config.get("enable_preprocessing", True)
         self.enable_image_analysis = self.config.get("enable_image_analysis", True)
         self.enable_page_analysis = self.config.get("enable_page_analysis", False)
+        self.enable_context_enhancement = self.config.get("enable_context_enhancement", True)
         
         # Cache configuration
         cache_dir = self.config.get("cache_dir", Path("cache/images"))
@@ -68,7 +70,8 @@ class PDFProcessor(BaseParser):
             f"🚀 PDFProcessor initialized - "
             f"preprocessing: {self.enable_preprocessing}, "
             f"image_analysis: {self.enable_image_analysis}, "
-            f"page_analysis: {self.enable_page_analysis}"
+            f"page_analysis: {self.enable_page_analysis}, "
+            f"context_enhancement: {self.enable_context_enhancement}"
         )
     
     def parse(self, file_path: Path) -> Document:
@@ -115,12 +118,25 @@ class PDFProcessor(BaseParser):
         logger.info("📄 Step 2: Extracting text and structure")
         document = self.base_parser.parse(file_path)
         
+        # Step 2.5: Context enhancement (if enabled)
+        if self.enable_context_enhancement and document.segments:
+            logger.info("🔍 Step 2.5: Enhancing segments with context")
+            try:
+                SegmentContextEnhancer.enhance_segments(
+                    document.segments, 
+                    document.metadata
+                )
+                logger.debug(f"Context enhancement complete for {len(document.segments)} segments")
+            except Exception as e:
+                logger.warning(f"Context enhancement failed: {e}, continuing without context")
+        
         # Step 3: Image analysis (if enabled)
         if self.enable_image_analysis or self.enable_page_analysis:
             logger.info("🔍 Step 3: Analyzing visual elements")
             analysis_result = await self.image_analyzer.analyze(
                 file_path, 
-                preprocess_result
+                preprocess_result,
+                document.segments  # Pass segments with context
             )
             
             # Add visual elements to document
@@ -254,6 +270,7 @@ class PDFProcessor(BaseParser):
             "enable_preprocessing": True,
             "enable_image_analysis": True,
             "enable_page_analysis": False,
+            "enable_context_enhancement": True,  # Enable context for better VLM analysis
             "parser_config": {
                 "use_docling": True,
                 "preserve_native_tags": True,

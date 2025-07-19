@@ -16,6 +16,7 @@ from core.parsers.interfaces.data_models import (
 )
 from .pdf_preprocessor import PreprocessResult
 from core.vlm.qwen25_processor import Qwen25VLMProcessor, VisualAnalysisResult
+from core.parsers.utils.segment_context_enhancer import SegmentContextEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,9 @@ class ImageAnalyzer:
         vlm_config = self.config.get("vlm_config", {})
         self.vlm_processor = Qwen25VLMProcessor(vlm_config)
         
+        # Limit configuration
+        self.max_images = self.config.get("max_images", None)
+        
         # Analysis prompts
         self.embedded_prompt = self.config.get(
             "embedded_prompt",
@@ -86,7 +90,8 @@ class ImageAnalyzer:
     async def analyze(
         self, 
         pdf_path: Path, 
-        preprocess_result: PreprocessResult
+        preprocess_result: PreprocessResult,
+        segments: Optional[List[Segment]] = None
     ) -> ImageAnalysisResult:
         """
         Main analysis method
@@ -94,6 +99,7 @@ class ImageAnalyzer:
         Args:
             pdf_path: Path to PDF file
             preprocess_result: Preprocessing results with image paths
+            segments: Optional list of document segments with context
             
         Returns:
             ImageAnalysisResult with all analyses
@@ -105,7 +111,8 @@ class ImageAnalyzer:
         # Analyze embedded images
         if self.analyze_embedded:
             embedded_results = await self._analyze_embedded_images(
-                preprocess_result.embedded_images
+                preprocess_result.embedded_images,
+                segments
             )
             result.embedded_images.extend(embedded_results)
             
@@ -131,10 +138,16 @@ class ImageAnalyzer:
     
     async def _analyze_embedded_images(
         self, 
-        embedded_images: List[Dict[str, Any]]
+        embedded_images: List[Dict[str, Any]],
+        segments: Optional[List[Segment]] = None
     ) -> List[VisualElement]:
         """Analyze embedded images"""
-        logger.info(f"📸 Analyzing {len(embedded_images)} embedded images")
+        # Apply limit if configured
+        if self.max_images and len(embedded_images) > self.max_images:
+            logger.info(f"📸 Limiting analysis to {self.max_images} of {len(embedded_images)} images")
+            embedded_images = embedded_images[:self.max_images]
+        else:
+            logger.info(f"📸 Analyzing {len(embedded_images)} embedded images")
         
         visual_elements = []
         
@@ -146,7 +159,7 @@ class ImageAnalyzer:
             # Create tasks for parallel processing
             tasks = []
             for img_info in batch:
-                task = self._analyze_single_image(img_info)
+                task = self._analyze_single_image(img_info, segments)
                 tasks.append(task)
             
             # Run batch
@@ -163,7 +176,11 @@ class ImageAnalyzer:
         
         return visual_elements
     
-    async def _analyze_single_image(self, img_info: Dict[str, Any]) -> Optional[VisualElement]:
+    async def _analyze_single_image(
+        self, 
+        img_info: Dict[str, Any],
+        segments: Optional[List[Segment]] = None
+    ) -> Optional[VisualElement]:
         """Analyze a single embedded image"""
         try:
             image_path = Path(img_info["path"])
@@ -171,11 +188,18 @@ class ImageAnalyzer:
                 logger.warning(f"⚠️ Image not found: {image_path}")
                 return None
             
+            # Build context-aware prompt
+            enhanced_prompt = self._build_context_aware_prompt(
+                img_info, 
+                segments, 
+                self.embedded_prompt
+            )
+            
             # Analyze with VLM
             logger.debug(f"🔍 Analyzing image: {image_path}")
             analysis = await self.vlm_processor.analyze_image(
                 str(image_path),
-                prompt=self.embedded_prompt
+                prompt=enhanced_prompt
             )
             
             if not analysis:
@@ -331,3 +355,47 @@ class ImageAnalyzer:
         if page_num in page_analyses:
             return page_analyses[page_num].description
         return None
+    
+    def _build_context_aware_prompt(
+        self, 
+        img_info: Dict[str, Any],
+        segments: Optional[List[Segment]],
+        base_prompt: str
+    ) -> str:
+        """Build a context-aware prompt for image analysis"""
+        if not segments:
+            return base_prompt
+        
+        # Find segments with context that might be relevant
+        page_num = img_info.get("page")
+        context_parts = []
+        
+        # Look for segments on the same page
+        if page_num is not None:
+            for segment in segments:
+                if segment.page_number == page_num and "context" in segment.metadata:
+                    # Check if this segment needs context (table, list, visual)
+                    if SegmentContextEnhancer.needs_context(segment):
+                        context_str = SegmentContextEnhancer.get_context_for_prompt(segment)
+                        if context_str:
+                            context_parts.append(context_str)
+                            break  # Use first relevant context
+        
+        # If no page-specific context, look for nearby visual references
+        if not context_parts and segments:
+            # Find segments that might reference this visual
+            for segment in segments:
+                if segment.visual_references and img_info.get("hash_ref") in segment.visual_references:
+                    if "context" in segment.metadata:
+                        context_str = SegmentContextEnhancer.get_context_for_prompt(segment)
+                        if context_str:
+                            context_parts.append(context_str)
+                            break
+        
+        # Build enhanced prompt
+        if context_parts:
+            enhanced_prompt = f"{base_prompt}\n\nContext: {' | '.join(context_parts)}"
+            logger.debug(f"📋 Enhanced prompt with context: {context_parts}")
+            return enhanced_prompt
+        
+        return base_prompt
